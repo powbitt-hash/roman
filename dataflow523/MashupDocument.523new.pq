@@ -124,8 +124,7 @@ shared SPA_MAJ_523_VyrobneObjednavky = let
   #"Add Kod Model New" = Table.AddColumn(#"Add Kod Drevina New", "Kod_Model_New", each 
     let 
       rawM = if [Model_Upraveny] = null then "" else Text.Upper([Model_Upraveny]),
-      // OPRAVA: normalizacia aj pre Ä a Å, nielen Ö (svedske nazvy modelov)
-      m = Text.Replace(Text.Replace(Text.Replace(rawM, "Ö", "O"), "Ä", "A"), "Å", "A"),
+      m = Text.Replace(rawM, "Ö", "O"),
       tech = if [MMITDS] = null then "" else Text.Upper([MMITDS])
     in
       if m = "STOCKHOLM" then "ST"
@@ -175,19 +174,8 @@ shared SPA_MAJ_523_VyrobneObjednavky = let
   #"Clean Datum" = Table.ReplaceValue(#"Changed column type 2", "0", null, Replacer.ReplaceValue, {"Datum"}),
   #"Changed column type Datum" = Table.TransformColumnTypes(#"Clean Datum", {{"Datum", type date}}),
 
-  // OPRAVA: cistenie chybovych buniek muselo ist PRED Table.Sort.
-  // Sort musi hodnoty porovnat, takze chybovu bunku (napr. z prevodu typu
-  // v kroku "Changed column type 2") vyhodi von skor, nez ju stihne
-  // nahradit krok "Replaced errors", ktory je az za "Choose columns".
-  // Toto NIE JE zmena logiky deduplikacie - Sort ani Distinct sa nemenia.
-  #"Pre-clean errors" = Table.ReplaceErrorValues(#"Changed column type Datum", {
-      {"Final_Cena_FY25", null}, {"Final_Cena_FY26", null},
-      {"Cena_FY24", null}, {"Cena_FY25", null}, {"Cena_FY26", null},
-      {"sort_prod_FY26", null}, {"Datum", null}, {"ODSAPR", null}
-  }),
-
   // Zachrana Sopronu a upratanie duplicit
-  #"Sorted Rows" = Table.Sort(#"Pre-clean errors", {{"Final_Cena_FY26", Order.Descending}}),
+  #"Sorted Rows" = Table.Sort(#"Changed column type Datum", {{"Final_Cena_FY26", Order.Descending}}),
   #"Removed Duplicates End" = Table.Distinct(#"Sorted Rows", {"Index_Pre_Deduplikaciu"}),
   #"Removed Index" = Table.RemoveColumns(#"Removed Duplicates End", {"Index_Pre_Deduplikaciu"}),
 
@@ -420,26 +408,10 @@ shared #"SPA MAJ_523_VyrobneObjednavky_DataDestination" = let
   TableNavigation = Navigation_2{[Id = "MAJ_523_VyrobneObjednavky_cennik", ItemKind = "Table"]}?[Data]?
 in
   TableNavigation;
-// NOVE: jedno miesto, kde je definovana cesta k zositu rozmery.xlsx.
-// Pri zmene servera alebo priecinka sa meni len tu, nie v dvoch dotazoch.
-// Bez destinacie a bez stagingu.
-shared RozmeryRaw = let
-  Source = Excel.Workbook(File.Contents("\\10.196.244.10\windata\06_Obchod\01_EXPEDICIA\Ekedalen\preskladnené výrobky z TT\rozmery.xlsx"), null, true)
-in
-  Source;
-// NOVE: jedno miesto pre zosit Evidencia HV z TT.xlsx vratane dvojiteho
-// PromoteHeaders, ktory bol predtym duplikovany v dotazoch prijem aj vyvoz.
-shared EvidenciaHVRaw = let
-  Source = Excel.Workbook(File.Contents("\\10.196.244.10\windata\06_Obchod\01_EXPEDICIA\Ekedalen\preskladnené výrobky z TT\Evidencia HV z TT.xlsx"), null, true),
-  #"Navigation 1" = Source{[Item = "evidencia HV", Kind = "Sheet"]}[Data],
-  #"Promoted headers" = Table.PromoteHeaders(#"Navigation 1", [PromoteAllScalars = true]),
-  #"Promoted headers 1" = Table.PromoteHeaders(#"Promoted headers", [PromoteAllScalars = true])
-in
-  #"Promoted headers 1";
 [DataDestinations = {[Definition = [Kind = "Reference", QueryName = "rozmery_koji_DataDestination", IsNewTarget = true], Settings = [Kind = "Automatic", TypeSettings = [Kind = "Table"]]]}]
 shared rozmery_koji = let
-  Source = RozmeryRaw,
-
+  Source = Excel.Workbook(File.Contents("\\10.196.244.10\windata\06_Obchod\01_EXPEDICIA\Ekedalen\preskladnené výrobky z TT\rozmery.xlsx"), null, true),
+  
   #"Navigation 1" = Source{[Item = "rozmery_koji", Kind = "Sheet"]}[Data],
   #"Promoted headers" = Table.PromoteHeaders(#"Navigation 1", [PromoteAllScalars = true]),
   
@@ -448,12 +420,7 @@ shared rozmery_koji = let
   #"Convert to Text" = Table.TransformColumnTypes(#"Renamed columns", {{"šírka_koje_xls", type text}, {"dĺžka_koje_xls", type text}, {"výška_koje_xls", type text}, {"m2_koje_xls", type text}}),
 
   // 1. Pridanie stĺpca Blokovane priamo v Dataflowe
-  // OPRAVA: Text.From(null) -> null -> Text.Contains(null, ...) -> null -> "if null"
-  // zhodilo cely dotaz (rovnaka chyba ako ErrorCode 10277 v objednavkach).
-  // Prazdna bunka v stlpci dlzka je teraz osetrena skratovym vyhodnotenim.
-  #"Added Blokovane" = Table.AddColumn(#"Convert to Text", "Blokovane", each
-      if [dĺžka_koje_xls] <> null and Text.Contains(Text.Lower(Text.From([dĺžka_koje_xls])), "blokova")
-      then "blokovane" else "neblokovane", type text),
+  #"Added Blokovane" = Table.AddColumn(#"Convert to Text", "Blokovane", each if Text.Contains(Text.Lower(Text.From([dĺžka_koje_xls])), "blokova") then "blokovane" else "neblokovane", type text),
 
   // 2. Nahradenie "blokované" nulou vo všetkých relevantných stĺpcoch
   #"Replace Blokovane" = Table.ReplaceValue(#"Added Blokovane", "blokované", "0", Replacer.ReplaceText, {"šírka_koje_xls", "dĺžka_koje_xls", "výška_koje_xls", "m2_koje_xls"}),
@@ -478,7 +445,7 @@ in
   #"Removed columns";
 [DataDestinations = {[Definition = [Kind = "Reference", QueryName = "rozmery_paliet_DataDestination", IsNewTarget = true], Settings = [Kind = "Automatic", TypeSettings = [Kind = "Table"]]]}]
 shared rozmery_paliet = let
-  Source = RozmeryRaw,
+  Source = Excel.Workbook(File.Contents("\\10.196.244.10\windata\06_Obchod\01_EXPEDICIA\Ekedalen\preskladnené výrobky z TT\rozmery.xlsx"), null, true),
   #"Navigation 1" = Source{[Item = "rozmery_paliet", Kind = "Sheet"]}[Data],
   #"Promoted headers" = Table.PromoteHeaders(#"Navigation 1", [PromoteAllScalars = true]),
   
@@ -486,9 +453,7 @@ shared rozmery_paliet = let
   #"Changed column type" = Table.TransformColumnTypes(#"Promoted headers", {{"položka", type text}, {"popis1", type text}, {"popis2", type text}, {"dlžka palety", Int64.Type}, {"šírka palety", Int64.Type}, {"výška palety", Int64.Type}, {"Column9", type text}, {"Column14", Int64.Type}}),
   
   // 2. NOVÝ KROK: Doplníme nuly zľava, aby mala položka vždy 13 znakov
-  // OPRAVA: Text.PadStart(null, 13, "0") vracia null, cim by prazdny riadok
-  // rozbil neskorsi join na Product.
-  #"Doplnenie_Nul" = Table.TransformColumns(#"Changed column type", {{"položka", each if _ = null then null else Text.PadStart(_, 13, "0"), type text}}),
+  #"Doplnenie_Nul" = Table.TransformColumns(#"Changed column type", {{"položka", each Text.PadStart(_, 13, "0"), type text}}),
 
   // 3. Premenovanie stĺpcov (teraz už pracujeme s opraveným stĺpcom z kroku vyššie)
   #"Renamed columns" = Table.RenameColumns(#"Doplnenie_Nul", {{"položka", "Product"}, {"dlžka palety", "dlžka_palety_xls"}, {"šírka palety", "šírka_palety_xls"}, {"výška palety", "výška_palety_xls"}}),
@@ -498,16 +463,22 @@ in
   #"Choose columns";
 [DataDestinations = {[Definition = [Kind = "Reference", QueryName = "evidencia_HV_prijem_DataDestination", IsNewTarget = true], Settings = [Kind = "Automatic", TypeSettings = [Kind = "Table"]]]}]
 shared evidencia_HV_prijem = let
-  Source = EvidenciaHVRaw,
-  #"Choose columns" = Table.SelectColumns(Source, {"dátum príjmu", "TDN-MAJ", "TDN-TT", "Dodávateľ", "Dopravca", "ŠPZ", "vodič", "plomba č.", "artikel", "kontajner č.", "počet ks", "popis mvx 1", "popis mvx 2"}),
+  Source = Excel.Workbook(File.Contents("\\10.196.244.10\windata\06_Obchod\01_EXPEDICIA\Ekedalen\preskladnené výrobky z TT\Evidencia HV z TT.xlsx"), null, true),
+  #"Navigation 1" = Source{[Item = "evidencia HV", Kind = "Sheet"]}[Data],
+  #"Promoted headers" = Table.PromoteHeaders(#"Navigation 1", [PromoteAllScalars = true]),
+  #"Promoted headers 1" = Table.PromoteHeaders(#"Promoted headers", [PromoteAllScalars = true]),
+  #"Choose columns" = Table.SelectColumns(#"Promoted headers 1", {"dátum príjmu", "TDN-MAJ", "TDN-TT", "Dodávateľ", "Dopravca", "ŠPZ", "vodič", "plomba č.", "artikel", "kontajner č.", "počet ks", "popis mvx 1", "popis mvx 2"}),
   #"Renamed columns" = Table.RenameColumns(#"Choose columns", {{"Dopravca", "Dopravca_dovoz"}, {"ŠPZ", "ŠPZ_dovoz"}, {"plomba č.", "plomba_dovoz"}, {"artikel", "Produkt"}, {"kontajner č.", "kontajner_dovoz"}, {"počet ks", "počet_vyrobkov_v_palete_dovoz"}}),
   #"Changed column type" = Table.TransformColumnTypes(#"Renamed columns", {{"dátum príjmu", type date}, {"TDN-MAJ", type text}, {"TDN-TT", type text}, {"Dodávateľ", type text}, {"Dopravca_dovoz", type text}, {"ŠPZ_dovoz", type text}, {"vodič", type text}, {"plomba_dovoz", type text}, {"Produkt", type text}, {"kontajner_dovoz", type text}, {"počet_vyrobkov_v_palete_dovoz", Int64.Type}, {"popis mvx 1", type text}, {"popis mvx 2", type text}})
 in
   #"Changed column type";
 [DataDestinations = {[Definition = [Kind = "Reference", QueryName = "evidencia_HV_vyvoz_DataDestination", IsNewTarget = true], Settings = [Kind = "Automatic", TypeSettings = [Kind = "Table"]]]}]
 shared evidencia_HV_vyvoz = let
-  Source = EvidenciaHVRaw,
-  #"Choose columns" = Table.SelectColumns(Source, {"dátum vývozu", "TDN-MAJ_1", "plomba č.1", "Odberateľ", "Dopravca_2", "ŠPZ_3", "vodič_4", "artikel_5", "kontajner č._6", "počet ks_7", "popis mvx 1_8", "popis mvx 2_9"}),
+   Source = Excel.Workbook(File.Contents("\\10.196.244.10\windata\06_Obchod\01_EXPEDICIA\Ekedalen\preskladnené výrobky z TT\Evidencia HV z TT.xlsx"), null, true),
+  #"Navigation 1" = Source{[Item = "evidencia HV", Kind = "Sheet"]}[Data],
+  #"Promoted headers" = Table.PromoteHeaders(#"Navigation 1", [PromoteAllScalars = true]),
+  #"Promoted headers 1" = Table.PromoteHeaders(#"Promoted headers", [PromoteAllScalars = true]),
+  #"Choose columns" = Table.SelectColumns(#"Promoted headers 1", {"dátum vývozu", "TDN-MAJ_1", "plomba č.1", "Odberateľ", "Dopravca_2", "ŠPZ_3", "vodič_4", "artikel_5", "kontajner č._6", "počet ks_7", "popis mvx 1_8", "popis mvx 2_9"}),
   #"Renamed columns" = Table.RenameColumns(#"Choose columns", {{"TDN-MAJ_1", "TDN_vyvozu"}, {"plomba č.1", "plomba_vyvoz"}, {"Dopravca_2", "Dopravca_vyvoz"}, {"ŠPZ_3", "SPZ_vyvoz"}, {"vodič_4", "vodic_vyvoz"}, {"artikel_5", "Produkt"}, {"kontajner č._6", "kontajner_vyvoz"}, {"počet ks_7", "počet_vyrobkov_v_palete_vyvoz"}}),
   #"Changed column type" = Table.TransformColumnTypes(#"Renamed columns", {{"dátum vývozu", type date}, {"TDN_vyvozu", type text}, {"plomba_vyvoz", type text}, {"Odberateľ", type text}, {"Dopravca_vyvoz", type text}, {"SPZ_vyvoz", type text}, {"vodic_vyvoz", type text}, {"Produkt", type text}, {"kontajner_vyvoz", type text}, {"počet_vyrobkov_v_palete_vyvoz", Int64.Type}, {"popis mvx 1_8", type text}, {"popis mvx 2_9", type text}})
 in
