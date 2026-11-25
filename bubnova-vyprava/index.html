@@ -1,0 +1,482 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Bubnová výprava</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;800&family=Nunito:wght@400;700;800&display=swap">
+<style>
+/* Layout: turné ako cesta zhora nadol – zastávky (kluby) a pri každej tri lístky (levely); hra je jedna obrazovka: noty tečú sprava k čiare úderu, pod nimi tri pady. */
+:root{
+  color-scheme:dark;
+  --stage:#17143a; --panel:#221d52; --panel-2:#2c2668; --line:#3f3785;
+  --ink:#f4f0ff; --muted:#aca6d8;
+  --brass:#f2b63c; --skin:#ff6b5e; --kick:#3fd0c0; --good:#9be58f;
+  --display:"Baloo 2","Trebuchet MS",system-ui,sans-serif;
+  --body:"Nunito",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --r:14px;
+}
+*{box-sizing:border-box}
+body{background:var(--stage);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.45;
+  padding-block:20px 40px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:860px;margin:0 auto;display:flex;flex-direction:column;gap:22px}
+h1,h2,h3{font-family:var(--display);margin:0;line-height:1.1;text-wrap:balance}
+h1{font-size:clamp(2rem,7vw,3.1rem);font-weight:800;letter-spacing:-.01em}
+h1 span{color:var(--brass)}
+h2{font-size:1.45rem}
+p{margin:0}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+button:focus-visible,select:focus-visible{outline:3px solid var(--brass);outline-offset:2px}
+.muted{color:var(--muted)}
+.label{font-size:.72rem;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+
+/* hlavička */
+.top{display:flex;flex-wrap:wrap;gap:14px 28px;align-items:flex-end;justify-content:space-between}
+.stats{display:flex;gap:22px;flex-wrap:wrap}
+.stat b{display:block;font-family:var(--display);font-size:1.5rem;line-height:1;font-variant-numeric:tabular-nums}
+
+/* nastavenia */
+.bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.chip{padding:8px 14px;border-radius:999px;background:var(--panel);border:2px solid var(--line);font-weight:700;font-size:.92rem}
+.chip[aria-pressed="true"]{background:var(--brass);border-color:var(--brass);color:var(--stage)}
+.chip:hover{border-color:var(--brass)}
+details{background:var(--panel);border-radius:var(--r);padding:12px 16px}
+summary{cursor:pointer;font-weight:800}
+details .bar{margin-top:12px}
+details p{margin-top:10px;font-size:.9rem;max-width:65ch}
+
+/* turné */
+.tour{display:flex;flex-direction:column;gap:26px;border-left:3px dashed var(--line);padding-left:18px;margin-left:6px}
+.venue{display:flex;flex-direction:column;gap:12px;position:relative}
+.venue::before{content:"";position:absolute;left:-27px;top:8px;width:14px;height:14px;border-radius:50%;background:var(--brass);box-shadow:0 0 0 4px var(--stage)}
+.tickets{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
+.ticket{text-align:left;background:var(--panel);border-radius:var(--r);padding:14px 16px 12px;display:flex;flex-direction:column;gap:6px;min-width:0;
+  border-left:6px solid var(--skin);position:relative}
+.ticket:hover:not(:disabled){background:var(--panel-2)}
+.ticket:disabled{opacity:.6;cursor:not-allowed;border-left-color:var(--line)}
+.ticket:disabled .stars{color:var(--muted);letter-spacing:0;font-size:.85rem}
+.ticket h3{font-size:1.12rem}
+.ticket .row{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.stars{letter-spacing:2px;color:var(--line);font-size:1.05rem}
+.stars i{font-style:normal;color:var(--brass)}
+.bpm{font-variant-numeric:tabular-nums;font-size:.85rem;color:var(--muted);font-weight:700}
+
+/* hra */
+.gamehead{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.hud{display:flex;gap:22px;align-items:flex-end;flex-wrap:wrap}
+.hud b{font-family:var(--display);font-size:1.7rem;line-height:1;font-variant-numeric:tabular-nums;display:block}
+.prog{flex:1;min-width:120px;height:8px;border-radius:99px;background:var(--panel);overflow:hidden;align-self:center}
+.prog div{height:100%;width:0;background:var(--brass)}
+canvas{display:block;width:100%;height:clamp(230px,40vh,340px);background:var(--panel);border-radius:var(--r);touch-action:none}
+.pads{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.pad{touch-action:none;user-select:none;-webkit-user-select:none;padding:20px 6px 14px;border-radius:var(--r);background:var(--panel);border-bottom:6px solid var(--c);
+  font-family:var(--display);font-size:1.15rem;font-weight:800;display:flex;flex-direction:column;align-items:center;gap:2px}
+.pad small{font-family:var(--body);font-size:.75rem;font-weight:700;color:var(--muted)}
+.pad.on{background:var(--c);color:var(--stage)}
+.pad.on small{color:var(--stage)}
+.tip{background:var(--panel);border-radius:var(--r);padding:12px 16px;max-width:65ch}
+
+/* výsledok */
+.result{background:var(--panel);border-radius:var(--r);padding:26px 22px;display:flex;flex-direction:column;gap:16px;align-items:flex-start}
+.bigstars{font-size:3rem;letter-spacing:8px;line-height:1;color:var(--line)}
+.bigstars i{font-style:normal;color:var(--brass)}
+.grid4{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:14px;width:100%}
+.grid4 b{display:block;font-family:var(--display);font-size:1.6rem;line-height:1.1;font-variant-numeric:tabular-nums}
+.btn{padding:11px 20px;border-radius:999px;font-weight:800;background:var(--brass);color:var(--stage)}
+.btn.ghost{background:none;border:2px solid var(--line);color:var(--ink)}
+.btn.ghost:hover{border-color:var(--brass)}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <p class="label" id="rank">Nováčik</p>
+      <h1>Bubnová <span>výprava</span></h1>
+    </div>
+    <div class="stats">
+      <div class="stat"><b id="st-stars">0/36</b><span class="label">hviezdy</span></div>
+      <div class="stat"><b id="st-streak">0</b><span class="label">dní v sérii</span></div>
+    </div>
+  </header>
+
+  <section id="home">
+    <div class="wrap">
+      <div class="bar">
+        <button class="chip" id="opt-slow" aria-pressed="false">Pomalé tempo (tréning)</button>
+        <button class="chip" id="opt-guide" aria-pressed="true">Počuť vzor</button>
+        <button class="chip" id="opt-calib">Kalibrácia oneskorenia</button>
+      </div>
+      <details>
+        <summary>Pripojiť bicie alebo mikrofón</summary>
+        <div class="bar">
+          <button class="chip" id="opt-midi" aria-pressed="false">Elektronické bicie (MIDI)</button>
+          <button class="chip" id="opt-mic" aria-pressed="false">Mikrofón (pad, akustické bicie)</button>
+        </div>
+        <p class="muted" id="io-status">Bez pripojenia sa hrá klávesmi J, F a medzerníkom alebo ťukaním na pady.</p>
+        <p class="muted">Mikrofón rozozná úder, nie to, ktorý bubon znel, a počuje aj reproduktor – hraj so slúchadlami. Po pripojení spusti kalibráciu.</p>
+      </details>
+      <div class="tour" id="tour"></div>
+    </div>
+  </section>
+
+  <section id="game" hidden>
+    <div class="wrap">
+      <div class="gamehead">
+        <div><p class="label" id="g-venue"></p><h2 id="g-name"></h2></div>
+        <button class="btn ghost" id="g-back">Späť na turné</button>
+      </div>
+      <div class="hud">
+        <div><b id="g-score">0</b><span class="label">body</span></div>
+        <div><b id="g-combo">0</b><span class="label">séria úderov</span></div>
+        <div class="prog" aria-hidden="true"><div id="g-prog"></div></div>
+      </div>
+      <canvas id="cv"></canvas>
+      <div class="pads">
+        <button class="pad" data-lane="h" style="--c:var(--brass)">Hi-hat<small>kláves J</small></button>
+        <button class="pad" data-lane="s" style="--c:var(--skin)">Rytmičák<small>kláves F</small></button>
+        <button class="pad" data-lane="k" style="--c:var(--kick)">Kopák<small>medzerník</small></button>
+      </div>
+      <p class="tip" id="g-tip"></p>
+    </div>
+  </section>
+
+  <section id="result" hidden>
+    <div class="result">
+      <p class="label" id="r-level"></p>
+      <div class="bigstars" id="r-stars"></div>
+      <h2 id="r-title"></h2>
+      <div class="grid4">
+        <div><b id="r-acc">0 %</b><span class="label">presnosť</span></div>
+        <div><b id="r-score">0</b><span class="label">body</span></div>
+        <div><b id="r-combo">0</b><span class="label">najdlhšia séria</span></div>
+        <div><b id="r-miss">0</b><span class="label">vynechané</span></div>
+      </div>
+      <p id="r-tip" style="max-width:65ch"></p>
+      <div class="bar">
+        <button class="btn" id="r-next">Ďalší level</button>
+        <button class="btn ghost" id="r-again">Ešte raz</button>
+        <button class="btn ghost" id="r-home">Späť na turné</button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+const $ = s => document.querySelector(s);
+const E  = '................';
+const H8 = 'x.x.x.x.x.x.x.x.';
+const S24 = '....x.......x...';
+const K13 = 'x.......x.......';
+const LANES = ['h', 's', 'k'];
+
+// Každý takt = tri riadky po 16 šestnástinách: hi-hat, rytmičák, kopák.
+const VENUES = [
+  { name: 'Garáž', sub: 'Tu začína každá kapela.', levels: [
+    { id: 'g1', name: 'Prvé údery', bpm: 60, loops: 4, bars: [[E, 'x...x...x...x...', E]], tip: 'Štvrťové noty na rytmičák. Počítaj nahlas: raz, dva, tri, štyri.' },
+    { id: 'g2', name: 'Kopák a rytmičák', bpm: 66, loops: 4, bars: [[E, S24, K13]], tip: 'Kopák na raz a tri, rytmičák na dva a štyri.' },
+    { id: 'g3', name: 'Osminy na hi-hat', bpm: 66, loops: 4, bars: [[H8, E, E]], tip: 'Osminy: raz-a, dva-a, tri-a, štyri-a. Ruka ide rovnomerne ako kyvadlo.' },
+  ]},
+  { name: 'Skúšobňa', sub: 'Ruky a nohy sa učia hrať spolu.', levels: [
+    { id: 's1', name: 'Hi-hat s rytmičákom', bpm: 70, loops: 4, bars: [[H8, S24, E]], tip: 'Hi-hat hrá stále osminy, na dva a štyri k nemu pridaj rytmičák.' },
+    { id: 's2', name: 'Prvý rockový rytmus', bpm: 72, loops: 4, bars: [[H8, S24, K13]], tip: 'Tento rytmus hrá polovica rockových pesničiek na svete.' },
+    { id: 's3', name: 'Kopák navyše', bpm: 76, loops: 4, bars: [[H8, S24, 'x.......x.x.....']], tip: 'Po tretej dobe príde ešte jeden kopák na „a“.' },
+  ]},
+  { name: 'Školský koncert', sub: 'Prvé publikum a prvé prechody.', levels: [
+    { id: 'k1', name: 'Rytmus s prechodom', bpm: 76, loops: 2, bars: [[H8, S24, K13], [H8, S24, K13], [H8, S24, K13], [E, H8, 'x...............']], tip: 'Tri takty rytmus, štvrtý takt prechod: osem úderov na rytmičák.' },
+    { id: 'k2', name: 'Šestnástiny', bpm: 56, loops: 4, bars: [[E, 'xxxxxxxxxxxxxxxx', E]], tip: 'Striedaj pravú a ľavú ruku. Na klávesnici môžeš striedať F a D.' },
+    { id: 'k3', name: 'Disko', bpm: 88, loops: 4, bars: [['..x...x...x...x.', S24, 'x...x...x...x...']], tip: 'Kopák na každú dobu, hi-hat medzi dobami.' },
+  ]},
+  { name: 'Klub', sub: 'Rýchlejšie tempo, plný sál.', levels: [
+    { id: 'c1', name: 'Rýchly rock', bpm: 100, loops: 4, bars: [[H8, S24, K13]], tip: 'Rovnaký rytmus ako v skúšobni, len rýchlejšie. Uvoľni ramená.' },
+    { id: 'c2', name: 'Synkopa', bpm: 84, loops: 4, bars: [[H8, S24, 'x..x....x.x.....']], tip: 'Druhý kopák príde tesne pred druhou dobou, medzi údermi hi-hatu.' },
+    { id: 'c3', name: 'Veľké finále', bpm: 90, loops: 2, bars: [[H8, S24, K13], [H8, S24, 'x.......x.x.....'], [H8, S24, 'x..x....x.x.....'], [E, 'x.x.xxxxx.x.xxxx', K13]], tip: 'Všetko, čo už vieš, v jednej skladbe. Posledný takt je prechod.' },
+  ]},
+];
+const ALL = VENUES.flatMap(v => v.levels.map(l => ({ ...l, venue: v.name })));
+const CALIB = { id: '_calib', name: 'Kalibrácia', venue: 'Nastavenie', bpm: 80, loops: 3, bars: [[E, 'x...x...x...x...', E]], calib: true,
+  tip: 'Udieraj presne s klikaním metronómu, čímkoľvek. Hra si zmeria oneskorenie tvojho zariadenia.' };
+
+// ---------- uložený postup ----------
+const KEY = 'bubnova-vyprava-v1';
+let S = { stars: {}, best: {}, streak: 0, last: '', slow: false, guide: true, off: { key: 0, touch: 30, midi: 0, mic: 50 } };
+try { const raw = localStorage.getItem(KEY); if (raw) { const p = JSON.parse(raw); S = { ...S, ...p, off: { ...S.off, ...(p.off || {}) } }; } } catch (e) {}
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
+
+// ---------- zvuk ----------
+let ctx = null, master = null, noise = null;
+function audio() {
+  if (!ctx) {
+    ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+    master = ctx.createGain(); master.gain.value = 0.9; master.connect(ctx.destination);
+    noise = ctx.createBuffer(1, ctx.sampleRate * 0.4, ctx.sampleRate);
+    const d = noise.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+  if (ctx.state === 'suspended') ctx.resume();
+  return ctx;
+}
+const outLat = () => ctx ? (ctx.outputLatency || ctx.baseLatency || 0) : 0;
+function env(t, peak, dur) { const g = ctx.createGain(); g.gain.setValueAtTime(peak, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur); g.connect(master); return g; }
+function play(type, t, vol = 1) {
+  t = Math.max(t, ctx.currentTime);
+  if (type === 'k') {
+    const o = ctx.createOscillator(); o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.12);
+    o.connect(env(t, 1.0 * vol, 0.22)); o.start(t); o.stop(t + 0.25);
+  } else if (type === 's' || type === 'h') {
+    const n = ctx.createBufferSource(); n.buffer = noise;
+    const f = ctx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = type === 'h' ? 7000 : 1500;
+    n.connect(f); f.connect(env(t, (type === 'h' ? 0.35 : 0.6) * vol, type === 'h' ? 0.05 : 0.16)); n.start(t); n.stop(t + 0.2);
+    if (type === 's') { const o = ctx.createOscillator(); o.type = 'triangle'; o.frequency.value = 190; o.connect(env(t, 0.5 * vol, 0.09)); o.start(t); o.stop(t + 0.1); }
+  } else {
+    const o = ctx.createOscillator(); o.type = 'square'; o.frequency.value = type === 'click1' ? 1600 : 1100;
+    o.connect(env(t, 0.16 * vol, 0.03)); o.start(t); o.stop(t + 0.04);
+  }
+}
+
+// ---------- hra ----------
+const WIN = 0.17, PERFECT = 0.05, GOOD = 0.11;
+const COL = { h: '#f2b63c', s: '#ff6b5e', k: '#3fd0c0' };
+const cv = $('#cv'), g2 = cv.getContext('2d');
+let G = null, lastKind = 'key';
+
+function start(level) {
+  const c = audio();
+  stop();
+  const rate = (S.slow && !level.calib) ? 0.75 : 1;
+  const beat = 60 / (level.bpm * rate), sps = beat / 4;
+  const t0 = c.currentTime + 0.5, T = t0 + 4 * beat;
+  const nb = level.bars.length, total = nb * level.loops;
+  const notes = [], events = [];
+  for (let i = 0; i < 4; i++) events.push({ t: t0 + i * beat, type: i ? 'click' : 'click1' });
+  for (let b = 0; b < total; b++) {
+    for (let q = 0; q < 4; q++) events.push({ t: T + (b * 4 + q) * beat, type: q ? 'click' : 'click1' });
+    const bar = level.bars[b % nb];
+    for (let s = 0; s < 16; s++) LANES.forEach((ln, li) => {
+      if (bar[li][s] === 'x') { const t = T + (b * 16 + s) * sps; notes.push({ t, lane: ln, st: 0, jt: 0 }); if (S.guide && !level.calib) events.push({ t, type: ln, guide: true }); }
+    });
+  }
+  events.sort((a, b) => a.t - b.t);
+  G = { level, notes, events, ei: 0, t0, T, beat, sps, end: T + total * 4 * beat, total, score: 0, combo: 0, maxCombo: 0, pts: 0, miss: 0, dts: [], raw: [], fx: [], slow: rate < 1 };
+  G.timer = setInterval(tick, 25);
+  $('#g-venue').textContent = level.venue + ' · ' + Math.round(level.bpm * rate) + ' úderov za minútu';
+  $('#g-name').textContent = level.name;
+  $('#g-tip').textContent = level.tip;
+  show('game'); hud(); tick();
+  G.raf = requestAnimationFrame(frame);
+}
+function stop() { if (G) { clearInterval(G.timer); cancelAnimationFrame(G.raf); G = null; } }
+function tick() {
+  if (!G) return;
+  while (G.ei < G.events.length && G.events[G.ei].t < ctx.currentTime + 0.12) { const e = G.events[G.ei++]; play(e.type, e.t, e.guide ? 0.45 : 1); }
+}
+function hud() { $('#g-score').textContent = G.score; $('#g-combo').textContent = G.combo; }
+
+function hit(lane, kind, tCtx) {
+  audio();
+  if (tCtx == null) tCtx = ctx.currentTime;
+  lastKind = kind;
+  if (lane !== 'any' && kind !== 'midi') play(lane, ctx.currentTime);
+  if (lane !== 'any') flashPad(lane);
+  if (!G) return;
+  const calib = G.level.calib;
+  const any = lane === 'any' || calib;
+  const th = tCtx - outLat() - (calib ? 0 : S.off[kind] / 1000);
+  const win = calib ? 0.3 : WIN;
+  let best = null, bd = win;
+  for (const n of G.notes) { if (n.st || (!any && n.lane !== lane)) continue; const d = Math.abs(n.t - th); if (d <= bd) { bd = d; best = n; } if (n.t - th > win) break; }
+  if (!best) { if (!calib && th > G.T - 0.1) { G.combo = 0; fx('mimo', '#aca6d8', lane === 'any' ? 's' : lane); hud(); } return; }
+  const d = th - best.t;
+  best.st = 1; best.jt = ctx.currentTime;
+  if (calib) { G.raw.push(d); G.kind = kind; fx('zaznamenané', '#9be58f', 's'); return; }
+  const a = Math.abs(d);
+  const pts = a <= PERFECT ? 100 : a <= GOOD ? 70 : 40;
+  G.combo++; G.maxCombo = Math.max(G.maxCombo, G.combo);
+  G.pts += pts; G.dts.push(d);
+  G.score += Math.round(pts * Math.min(3, 1 + Math.floor(G.combo / 10) * 0.5));
+  fx(a <= PERFECT ? 'presne!' : d < 0 ? 'priskoro' : 'neskoro', a <= PERFECT ? '#9be58f' : a <= GOOD ? '#f2b63c' : '#ff6b5e', best.lane);
+  hud();
+}
+function fx(txt, color, lane) { if (G) G.fx.push({ txt, color, lane, t: ctx.currentTime }); }
+function flashPad(lane) { const p = document.querySelector('.pad[data-lane="' + lane + '"]'); if (!p) return; p.classList.add('on'); setTimeout(() => p.classList.remove('on'), 90); }
+
+function frame() {
+  if (!G) return;
+  const now = ctx.currentTime, vis = now - outLat();
+  const lim = vis - S.off[lastKind] / 1000 - (G.level.calib ? 0.3 : WIN);
+  for (const n of G.notes) { if (n.t > lim) break; if (!n.st) { n.st = 2; n.jt = now; if (!G.level.calib) { G.miss++; G.combo = 0; hud(); } } }
+  $('#g-prog').style.width = Math.max(0, Math.min(100, (vis - G.T) / (G.end - G.T) * 100)) + '%';
+  draw(vis, now);
+  if (vis > G.end + 0.7) return finish();
+  G.raf = requestAnimationFrame(frame);
+}
+
+function draw(vis, now) {
+  const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+  g2.setTransform(dpr, 0, 0, dpr, 0, 0); g2.clearRect(0, 0, W, H);
+  const hitX = W < 520 ? 70 : 120, ppb = (W - hitX) / (W < 520 ? 3 : 5), pps = ppb / G.beat;
+  const top = 34, laneH = (H - top - 12) / 3, ly = i => top + laneH * (i + 0.5), X = t => hitX + (t - vis) * pps;
+  g2.textBaseline = 'middle';
+  // dráhy
+  LANES.forEach((ln, i) => {
+    g2.strokeStyle = '#3f3785'; g2.lineWidth = 2; g2.beginPath(); g2.moveTo(0, ly(i)); g2.lineTo(W, ly(i)); g2.stroke();
+    g2.fillStyle = COL[ln]; g2.font = '800 13px "Baloo 2",sans-serif'; g2.textAlign = 'left';
+    g2.fillText(ln === 'h' ? 'HI-HAT' : ln === 's' ? 'RYTMIČÁK' : 'KOPÁK', 8, ly(i) - laneH * 0.34);
+  });
+  // doby a počítanie
+  const b0 = Math.floor((vis - G.T) / G.beat * 2) - 1;
+  for (let e = Math.max(0, b0); ; e++) {
+    const x = X(G.T + e * G.beat / 2); if (x > W + 20) break; if (G.T + e * G.beat / 2 > G.end - 0.001) break;
+    const on = e % 2 === 0, q = (e / 2) % 4;
+    g2.strokeStyle = on ? (q === 0 ? '#aca6d8' : '#4d459a') : '#2c2668'; g2.lineWidth = q === 0 && on ? 2 : 1;
+    g2.beginPath(); g2.moveTo(x, top - 6); g2.lineTo(x, H - 8); g2.stroke();
+    g2.fillStyle = on ? '#f4f0ff' : '#aca6d8'; g2.textAlign = 'center'; g2.font = (on ? '800 15px' : '700 12px') + ' "Baloo 2",sans-serif';
+    g2.fillText(on ? String(q + 1) : 'a', x, 15);
+  }
+  // čiara úderu
+  g2.strokeStyle = '#f4f0ff'; g2.lineWidth = 4; g2.beginPath(); g2.moveTo(hitX, top - 8); g2.lineTo(hitX, H - 6); g2.stroke();
+  // noty
+  const r = Math.min(15, laneH * 0.26);
+  for (const n of G.notes) {
+    const x = X(n.t); if (x > W + 30) break; if (x < -30) continue;
+    const y = ly(LANES.indexOf(n.lane)); let a = 1, k = 1;
+    if (n.st) { const age = (now - n.jt) / 0.25; if (age > 1) continue; a = 1 - age; k = n.st === 1 ? 1 + age : 1; }
+    g2.globalAlpha = n.st === 2 ? a * 0.35 : a; g2.strokeStyle = g2.fillStyle = COL[n.lane];
+    if (n.lane === 'h') { g2.lineWidth = 4; g2.lineCap = 'round'; g2.beginPath(); g2.moveTo(x - r * k * .8, y - r * k * .8); g2.lineTo(x + r * k * .8, y + r * k * .8); g2.moveTo(x + r * k * .8, y - r * k * .8); g2.lineTo(x - r * k * .8, y + r * k * .8); g2.stroke(); }
+    else { g2.beginPath(); g2.arc(x, y, r * k * (n.lane === 'k' ? 1.15 : 1), 0, 7); g2.fill(); }
+    g2.globalAlpha = 1;
+  }
+  // hodnotenie úderu
+  G.fx = G.fx.filter(f => now - f.t < 0.6);
+  for (const f of G.fx) { const p = (now - f.t) / 0.6; g2.globalAlpha = 1 - p; g2.fillStyle = f.color; g2.textAlign = 'left'; g2.font = '800 17px "Baloo 2",sans-serif';
+    g2.fillText(f.txt, hitX + 12, ly(LANES.indexOf(f.lane)) - laneH * 0.3 - p * 10); g2.globalAlpha = 1; }
+  // odpočítanie
+  if (vis < G.T) { const c = Math.floor((vis - G.t0) / G.beat) + 1; if (c >= 1 && c <= 4) { g2.fillStyle = '#f2b63c'; g2.textAlign = 'center'; g2.font = '800 ' + Math.round(H * 0.42) + 'px "Baloo 2",sans-serif'; g2.fillText(String(c), W / 2 + hitX / 2, H / 2 + 8); } }
+}
+
+function finish() {
+  const g = G; stop();
+  const lv = g.level;
+  if (lv.calib) {
+    if (g.raw.length >= 5) { const a = g.raw.slice().sort((x, y) => x - y); const m = Math.round(a[a.length >> 1] * 1000); S.off[g.kind || 'key'] = Math.max(-100, Math.min(350, m)); save();
+      result(lv, { calib: 'Hotovo. Oneskorenie tvojho zariadenia je ' + S.off[g.kind || 'key'] + ' ms a hra ho odteraz odpočíta.' }); }
+    else result(lv, { calib: 'Zachytil som málo úderov. Skús to znova a udieraj s každým kliknutím.' });
+    return;
+  }
+  const n = g.notes.length, acc = Math.round(g.pts / (n * 100) * 100);
+  const stars = acc >= 90 ? 3 : acc >= 75 ? 2 : acc >= 55 ? 1 : 0;
+  if (!g.slow) { S.stars[lv.id] = Math.max(S.stars[lv.id] || 0, stars); S.best[lv.id] = Math.max(S.best[lv.id] || 0, g.score); }
+  const day = d => d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+  const today = day(new Date()), y = new Date(); y.setDate(y.getDate() - 1);
+  if (S.last !== today) { S.streak = S.last === day(y) ? S.streak + 1 : 1; S.last = today; }
+  save();
+  const mean = g.dts.length ? g.dts.reduce((a, b) => a + b, 0) / g.dts.length * 1000 : 0;
+  let tip;
+  if (g.dts.length < n * 0.4) tip = 'Veľa nôt ti ušlo. Zapni si pomalé tempo a skús najprv len počúvať a počítať.';
+  else if (mean < -25) tip = 'Ponáhľaš sa, v priemere o ' + Math.round(-mean) + ' ms. Počkaj si na kliknutie metronómu.';
+  else if (mean > 25) tip = 'Zaostávaš, v priemere o ' + Math.round(mean) + ' ms. Ak sa to opakuje pri každom leveli, spusti kalibráciu.';
+  else tip = 'Tempo držíš presne, v priemere na ' + Math.abs(Math.round(mean)) + ' ms od metronómu.';
+  result(lv, { stars, acc, score: g.score, combo: g.maxCombo, miss: g.miss, tip, slow: g.slow });
+}
+
+// ---------- obrazovky ----------
+let current = null;
+function show(id) { ['home', 'game', 'result'].forEach(s => $('#' + s).hidden = s !== id); window.scrollTo(0, 0); }
+const starHtml = n => '<i>' + '★'.repeat(n) + '</i>' + '★'.repeat(3 - n);
+function result(lv, r) {
+  current = lv;
+  $('#r-level').textContent = lv.venue + ' · ' + lv.name;
+  const idx = ALL.findIndex(l => l.id === lv.id), next = ALL[idx + 1];
+  if (r.calib) {
+    $('#r-stars').innerHTML = ''; $('#r-title').textContent = 'Kalibrácia'; $('#r-tip').textContent = r.calib;
+    document.querySelector('#result .grid4').hidden = true; $('#r-next').hidden = true;
+  } else {
+    document.querySelector('#result .grid4').hidden = false;
+    $('#r-stars').innerHTML = starHtml(r.stars);
+    $('#r-title').textContent = r.stars === 3 ? 'Parádne zahrané!' : r.stars === 2 ? 'Výborne!' : r.stars === 1 ? 'Level splnený' : 'Ešte to chce tréning';
+    $('#r-acc').textContent = r.acc + ' %'; $('#r-score').textContent = r.score; $('#r-combo').textContent = r.combo; $('#r-miss').textContent = r.miss;
+    $('#r-tip').textContent = r.tip + (r.slow ? ' V pomalom tempe sa hviezdy nezapisujú.' : '');
+    $('#r-next').hidden = !(next && unlocked(idx + 1));
+  }
+  show('result'); renderHome();
+}
+const unlocked = i => i === 0 || (S.stars[ALL[i - 1].id] || 0) >= 1;
+function renderHome() {
+  const total = ALL.reduce((a, l) => a + (S.stars[l.id] || 0), 0);
+  $('#st-stars').textContent = total + '/' + ALL.length * 3;
+  $('#st-streak').textContent = S.streak || 0;
+  $('#rank').textContent = total >= 33 ? 'Hviezda pódia' : total >= 24 ? 'Klubový bubeník' : total >= 15 ? 'Bubeník zo skúšobne' : total >= 6 ? 'Garážový bubeník' : 'Nováčik';
+  $('#opt-slow').setAttribute('aria-pressed', S.slow); $('#opt-guide').setAttribute('aria-pressed', S.guide);
+  const tour = $('#tour'); tour.textContent = '';
+  let i = 0;
+  for (const v of VENUES) {
+    const sec = document.createElement('div'); sec.className = 'venue';
+    sec.innerHTML = '<div><h2></h2><p class="muted"></p></div><div class="tickets"></div>';
+    sec.querySelector('h2').textContent = v.name; sec.querySelector('p').textContent = v.sub;
+    for (const l of v.levels) {
+      const idx = i++, b = document.createElement('button'); b.className = 'ticket'; b.disabled = !unlocked(idx);
+      b.innerHTML = '<div class="row"><span class="label"></span><span class="bpm"></span></div><h3></h3><div class="stars"></div>';
+      b.querySelector('.label').textContent = 'Level ' + (idx + 1);
+      b.querySelector('.bpm').textContent = l.bpm + ' BPM';
+      b.querySelector('h3').textContent = l.name;
+      b.querySelector('.stars').innerHTML = b.disabled ? 'zamknuté' : starHtml(S.stars[l.id] || 0);
+      b.addEventListener('click', () => start(ALL[idx]));
+      sec.querySelector('.tickets').appendChild(b);
+    }
+    tour.appendChild(sec);
+  }
+}
+
+// ---------- vstupy ----------
+const KEYS = { KeyJ: 'h', KeyK: 'h', KeyF: 's', KeyD: 's', Space: 'k', KeyV: 'k', KeyB: 'k' };
+const evTime = e => { if (!ctx) return null; const lag = (performance.now() - e.timeStamp) / 1000; return ctx.currentTime - (lag > 0 && lag < 0.5 ? lag : 0); };
+addEventListener('keydown', e => {
+  if (e.code === 'Escape' && !$('#game').hidden) { stop(); show('home'); return; }
+  const ln = KEYS[e.code]; if (!ln || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+  if ($('#game').hidden && e.target.closest && e.target.closest('button,summary,input,select')) return;
+  if (!$('#game').hidden) e.preventDefault();
+  audio(); hit(ln, 'key', evTime(e));
+});
+document.querySelectorAll('.pad').forEach(p => p.addEventListener('pointerdown', e => { e.preventDefault(); audio(); hit(p.dataset.lane, e.pointerType === 'touch' ? 'touch' : 'key', evTime(e)); }));
+
+const MIDI = { 35: 'k', 36: 'k', 37: 's', 38: 's', 39: 's', 40: 's', 22: 'h', 26: 'h', 42: 'h', 44: 'h', 46: 'h', 49: 'h', 51: 'h', 53: 'h', 55: 'h', 57: 'h', 59: 'h', 41: 's', 43: 's', 45: 's', 47: 's', 48: 's', 50: 's' };
+const io = t => $('#io-status').textContent = t;
+$('#opt-midi').addEventListener('click', async () => {
+  audio();
+  try {
+    if (!navigator.requestMIDIAccess) throw 0;
+    const acc = await navigator.requestMIDIAccess();
+    const bind = () => { let n = 0; acc.inputs.forEach(inp => { n++; inp.onmidimessage = m => { const [st, note, vel] = m.data; if ((st & 0xf0) === 0x90 && vel > 0 && MIDI[note]) hit(MIDI[note], 'midi', evTime(m)); }; }); return n; };
+    const n = bind(); acc.onstatechange = bind;
+    $('#opt-midi').setAttribute('aria-pressed', n > 0);
+    io(n ? 'Pripojené MIDI zariadenia: ' + n + '. Zvuk hrá tvoj modul bicích.' : 'Prístup k MIDI je povolený, ale žiadne zariadenie nie je pripojené. Zapoj bicie cez USB a klikni znova.');
+  } catch (e) { io('MIDI tu nie je dostupné. Otvor súbor hry priamo v prehliadači Chrome alebo Edge na počítači.'); }
+});
+let micTimer = null;
+$('#opt-mic').addEventListener('click', async () => {
+  audio();
+  if (micTimer) { clearInterval(micTimer); micTimer = null; $('#opt-mic').setAttribute('aria-pressed', false); io('Mikrofón je vypnutý.'); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    const an = ctx.createAnalyser(); an.fftSize = 256; ctx.createMediaStreamSource(stream).connect(an);
+    const buf = new Float32Array(an.fftSize); let avg = 0.01, last = 0;
+    micTimer = setInterval(() => {
+      an.getFloatTimeDomainData(buf); let pk = 0; for (let i = 0; i < buf.length; i++) { const v = Math.abs(buf[i]); if (v > pk) pk = v; }
+      const now = ctx.currentTime;
+      if (pk > 0.1 && pk > avg * 3 && now - last > 0.09) { last = now; hit('any', 'mic', now - an.fftSize / ctx.sampleRate / 2); }
+      avg = avg * 0.9 + pk * 0.1;
+    }, 5);
+    $('#opt-mic').setAttribute('aria-pressed', true); io('Mikrofón počúva. Každý úder sa priradí k najbližšej note.');
+  } catch (e) { io('Mikrofón tu nie je dostupný alebo nebol povolený. Otvor súbor hry priamo v prehliadači na počítači.'); }
+});
+
+$('#opt-slow').addEventListener('click', () => { S.slow = !S.slow; save(); renderHome(); });
+$('#opt-guide').addEventListener('click', () => { S.guide = !S.guide; save(); renderHome(); });
+$('#opt-calib').addEventListener('click', () => start(CALIB));
+$('#g-back').addEventListener('click', () => { stop(); show('home'); });
+$('#r-home').addEventListener('click', () => show('home'));
+$('#r-again').addEventListener('click', () => start(current));
+$('#r-next').addEventListener('click', () => { const n = ALL[ALL.findIndex(l => l.id === current.id) + 1]; if (n) start(n); });
+
+renderHome();
+window.__bubny = { get G() { return G; }, hit, start, ALL, get ctx() { return ctx; } };
+})();
+</script>
