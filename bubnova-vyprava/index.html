@@ -44,9 +44,25 @@ details .bar{margin-top:12px}
 details p{margin-top:10px;font-size:.9rem;max-width:65ch}
 
 /* turné */
-.tour{display:flex;flex-direction:column;gap:26px;border-left:3px dashed var(--line);padding-left:18px;margin-left:6px}
-.venue{display:flex;flex-direction:column;gap:12px;position:relative}
-.venue::before{content:"";position:absolute;left:-27px;top:8px;width:14px;height:14px;border-radius:50%;background:var(--brass);box-shadow:0 0 0 4px var(--stage)}
+.tour{display:flex;flex-direction:column;gap:30px}
+.venue{display:flex;flex-direction:column;gap:12px}
+.unit{display:flex;flex-direction:column;gap:14px}
+.unit-head{background:var(--uc);color:var(--stage);border-radius:var(--r);padding:14px 18px}
+.unit-head .label{color:var(--stage);opacity:.75}
+.nodes{display:flex;flex-direction:column;align-items:center;gap:18px;padding-block:8px;background:repeating-linear-gradient(to bottom,var(--line) 0 8px,transparent 8px 16px) center/3px 100% no-repeat}
+.node{display:flex;flex-direction:column;align-items:center;gap:3px;transform:translateX(var(--dx));background:var(--stage);padding:8px 12px;border-radius:var(--r)}
+.node .disc{width:74px;height:74px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-size:1.7rem;font-weight:800;color:var(--stage);background:radial-gradient(circle,var(--ink) 0 56%,var(--uc) 58% 100%)}
+.node:disabled{cursor:not-allowed}
+.node:disabled .disc{background:radial-gradient(circle,var(--panel-2) 0 56%,var(--line) 58% 100%);color:var(--muted)}
+.node:disabled .stars{color:var(--muted);letter-spacing:0;font-size:.8rem}
+.node.cur .disc{box-shadow:0 0 0 5px var(--stage),0 0 0 9px var(--uc)}
+.node:hover:not(:disabled) .disc{filter:brightness(1.1)}
+.node .go{font-size:.72rem;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--uc);margin-top:6px}
+.node .nm{font-family:var(--display);font-weight:800;font-size:1.02rem}
+.goal{display:flex;flex-direction:column;gap:6px}
+.goal .row{display:flex;justify-content:space-between;gap:10px}
+.goal .prog{flex:none;height:10px;align-self:stretch}
+.goal .prog div{background:var(--good)}
 .tickets{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
 .ticket{text-align:left;background:var(--panel);border-radius:var(--r);padding:14px 16px 12px;display:flex;flex-direction:column;gap:6px;min-width:0;
   border-left:6px solid var(--skin);position:relative}
@@ -118,6 +134,10 @@ tr:last-child td{border-bottom:0}
       <div class="stat"><b id="st-streak">0</b><span class="label">dní v sérii</span></div>
     </div>
   </header>
+  <div class="goal">
+    <div class="row"><span class="label">Denný cieľ</span><span class="label" id="st-goal">0 / 50 XP</span></div>
+    <div class="prog"><div id="st-goalbar"></div></div>
+  </div>
 
   <section id="home">
     <div class="wrap">
@@ -126,7 +146,6 @@ tr:last-child td{border-bottom:0}
         <button class="btn" id="opt-report">Report cvičenia</button>
       </div>
       <div class="bar">
-        <button class="chip" id="opt-slow" aria-pressed="false">Pomalé tempo (tréning)</button>
         <button class="chip" id="opt-guide" aria-pressed="true">Počuť vzor</button>
         <button class="chip" id="opt-calib">Kalibrácia oneskorenia</button>
       </div>
@@ -211,11 +230,24 @@ tr:last-child td{border-bottom:0}
     </div>
   </section>
 
+  <section id="between" hidden>
+    <div class="result">
+      <p class="label" id="b-step"></p>
+      <h2 id="b-title"></h2>
+      <p id="b-text" style="max-width:65ch"></p>
+      <div class="bar">
+        <button class="btn" id="b-go">Pokračovať</button>
+        <button class="btn ghost" id="b-home">Späť na turné</button>
+      </div>
+    </div>
+  </section>
+
   <section id="result" hidden>
     <div class="result">
       <p class="label" id="r-level"></p>
       <div class="bigstars" id="r-stars"></div>
       <h2 id="r-title"></h2>
+      <p class="label" id="r-xp" style="color:var(--good)"></p>
       <div class="grid4">
         <div><b id="r-acc">0 %</b><span class="label">presnosť</span></div>
         <div><b id="r-score">0</b><span class="label">body</span></div>
@@ -226,6 +258,7 @@ tr:last-child td{border-bottom:0}
       <div class="bar">
         <button class="btn" id="r-next">Ďalší level</button>
         <button class="btn ghost" id="r-again">Ešte raz</button>
+        <button class="btn ghost" id="r-slow">Precvičiť pomaly</button>
         <button class="btn ghost" id="r-home">Späť na turné</button>
       </div>
     </div>
@@ -270,7 +303,7 @@ const CALIB = { id: '_calib', name: 'Kalibrácia', venue: 'Nastavenie', bpm: 80,
 
 // ---------- uložený postup ----------
 const KEY = 'bubnova-vyprava-v1';
-let S = { stars: {}, best: {}, streak: 0, last: '', slow: false, guide: true, student: '', log: {}, custom: {}, off: { key: 0, touch: 30, midi: 0, mic: 50 } };
+let S = { stars: {}, best: {}, streak: 0, last: '', slow: false, guide: true, student: '', log: {}, custom: {}, xp: 0, dayXp: { d: '', xp: 0 }, off: { key: 0, touch: 30, midi: 0, mic: 50 } };
 try { const raw = localStorage.getItem(KEY); if (raw) { const p = JSON.parse(raw); S = { ...S, ...p, off: { ...S.off, ...(p.off || {}) } }; } } catch (e) {}
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
 
@@ -310,28 +343,47 @@ const COL = { h: '#f2b63c', s: '#ff6b5e', k: '#3fd0c0' };
 const cv = $('#cv'), g2 = cv.getContext('2d');
 let G = null, lastKind = 'key';
 
-function start(level) {
+// Lekcia = kroky: počúvaj (ukážka), hraj pomaly, hraj v tempe. Level, ktorý už má hviezdu, ide rovno v tempe.
+const GOAL = 50, STAGE = { listen: 'počúvaj a pozeraj', slow: 'hraj pomaly', full: 'hraj v tempe' };
+let LES = null;
+function start(level, stages) {
+  audio();
+  LES = { level, i: 0, stages: stages || (level.calib || S.stars[level.id] > 0 ? ['full'] : ['listen', 'slow', 'full']) };
+  run();
+}
+function addXp(n) {
+  const d = ymd(new Date()); if (!S.dayXp || S.dayXp.d !== d) S.dayXp = { d, xp: 0 };
+  const before = S.dayXp.xp; S.dayXp.xp += n; S.xp = (S.xp || 0) + n; save();
+  return before < GOAL && S.dayXp.xp >= GOAL;
+}
+function between(title, text, btn) {
+  $('#b-step').textContent = LES.level.name + ' · krok ' + (LES.i + 1) + ' z ' + LES.stages.length;
+  $('#b-title').textContent = title; $('#b-text').textContent = text; $('#b-go').textContent = btn;
+  show('between'); renderHome();
+}
+function run() {
+  const level = LES.level, stage = LES.stages[LES.i];
   const c = audio();
   stop();
-  const rate = (S.slow && !level.calib) ? 0.75 : 1;
+  const rate = stage === 'slow' ? 0.75 : 1;
   const beat = 60 / (level.bpm * rate), sps = beat / 4;
   const t0 = c.currentTime + 0.5, T = t0 + 4 * beat;
-  const nb = level.bars.length, total = nb * level.loops;
+  const nb = level.bars.length, total = nb * (stage === 'listen' ? 1 : stage === 'slow' ? Math.min(2, level.loops) : level.loops);
   const notes = [], events = [];
   for (let i = 0; i < 4; i++) events.push({ t: t0 + i * beat, type: i ? 'click' : 'click1' });
   for (let b = 0; b < total; b++) {
     for (let q = 0; q < 4; q++) events.push({ t: T + (b * 4 + q) * beat, type: q ? 'click' : 'click1' });
     const bar = level.bars[b % nb];
     for (let s = 0; s < 16; s++) LANES.forEach((ln, li) => {
-      if (bar[li][s] === 'x') { const t = T + (b * 16 + s) * sps; notes.push({ t, lane: ln, st: 0, jt: 0 }); if (S.guide && !level.calib) events.push({ t, type: ln, guide: true }); }
+      if (bar[li][s] === 'x') { const t = T + (b * 16 + s) * sps; notes.push({ t, lane: ln, st: 0, jt: 0 }); if ((S.guide || stage === 'listen') && !level.calib) events.push({ t, type: ln, guide: true }); }
     });
   }
   events.sort((a, b) => a.t - b.t);
-  G = { level, notes, events, ei: 0, t0, T, beat, sps, end: T + total * 4 * beat, total, score: 0, combo: 0, maxCombo: 0, pts: 0, miss: 0, dts: [], raw: [], fx: [], slow: rate < 1 };
+  G = { level, notes, events, ei: 0, t0, T, beat, sps, end: T + total * 4 * beat, total, score: 0, combo: 0, maxCombo: 0, pts: 0, miss: 0, dts: [], raw: [], fx: [], slow: stage === 'slow', auto: stage === 'listen' };
   G.timer = setInterval(tick, 25);
-  $('#g-venue').textContent = level.venue + ' · ' + Math.round(level.bpm * rate) + ' úderov za minútu';
+  $('#g-venue').textContent = (LES.stages.length > 1 ? 'Krok ' + (LES.i + 1) + ' z ' + LES.stages.length + ': ' + STAGE[stage] : level.venue) + ' · ' + Math.round(level.bpm * rate) + ' úderov za minútu';
   $('#g-name').textContent = level.name;
-  $('#g-tip').textContent = level.tip;
+  $('#g-tip').textContent = stage === 'listen' ? 'Zatiaľ nehraj. Pozeraj, ako noty dopadajú na bielu čiaru, a počítaj si nahlas.' : level.tip;
   show('game'); hud(); tick();
   G.raf = requestAnimationFrame(frame);
 }
@@ -348,7 +400,7 @@ function hit(lane, kind, tCtx) {
   lastKind = kind;
   if (lane !== 'any' && kind !== 'midi') play(lane, ctx.currentTime);
   if (lane !== 'any') flashPad(lane);
-  if (!G) return;
+  if (!G || G.auto) return;
   const calib = G.level.calib;
   const any = lane === 'any' || calib;
   const th = tCtx - outLat() - (calib ? 0 : S.off[kind] / 1000);
@@ -373,6 +425,7 @@ function flashPad(lane) { const p = document.querySelector('.pad[data-lane="' + 
 function frame() {
   if (!G) return;
   const now = ctx.currentTime, vis = now - outLat();
+  if (G.auto) for (const n of G.notes) { if (n.t > vis) break; if (!n.st) { n.st = 1; n.jt = now; flashPad(n.lane); } }
   const lim = vis - S.off[lastKind] / 1000 - (G.level.calib ? 0.3 : WIN);
   for (const n of G.notes) { if (n.t > lim) break; if (!n.st) { n.st = 2; n.jt = now; if (!G.level.calib) { G.miss++; G.combo = 0; hud(); } } }
   $('#g-prog').style.width = Math.max(0, Math.min(100, (vis - G.T) / (G.end - G.T) * 100)) + '%';
@@ -434,6 +487,7 @@ function finish() {
     else result(lv, { calib: 'Zachytil som málo úderov. Skús to znova a udieraj s každým kliknutím.' });
     return;
   }
+  if (g.auto) { LES.i++; return between('Teraz ty', 'Zahráš si to isté pomaly. Udri vždy, keď nota príde na bielu čiaru.', 'Hrať pomaly'); }
   const n = g.notes.length, acc = Math.round(g.pts / (n * 100) * 100);
   const stars = acc >= 90 ? 3 : acc >= 75 ? 2 : acc >= 55 ? 1 : 0;
   if (!g.slow) { S.stars[lv.id] = Math.max(S.stars[lv.id] || 0, stars); S.best[lv.id] = Math.max(S.best[lv.id] || 0, g.score); }
@@ -443,31 +497,34 @@ function finish() {
   save();
   const mean = g.dts.length ? g.dts.reduce((a, b) => a + b, 0) / g.dts.length * 1000 : 0;
   logRun({ l: lv.id, a: acc, s: stars, p: g.score, m: g.miss, n, d: Math.round(mean), h: g.dts.length, t: Math.round(g.end - g.t0), slow: g.slow ? 1 : 0, at: Date.now() });
+  if (g.slow) { addXp(5); LES.i++; return between(acc >= 75 ? 'Výborne!' : acc >= 55 ? 'Dobre!' : 'Ide to', 'V pomalom tempe si trafil ' + acc + ' %. Teraz to isté v plnom tempe.', 'Hrať v tempe'); }
+  const xp = 10 + stars * 5, goalHit = addXp(xp);
   let tip;
-  if (g.dts.length < n * 0.4) tip = 'Veľa nôt ti ušlo. Zapni si pomalé tempo a skús najprv len počúvať a počítať.';
+  if (g.dts.length < n * 0.4) tip = 'Veľa nôt ti ušlo. Daj si „Precvičiť pomaly“ a skús najprv len počúvať a počítať.';
   else if (mean < -25) tip = 'Ponáhľaš sa, v priemere o ' + Math.round(-mean) + ' ms. Počkaj si na kliknutie metronómu.';
   else if (mean > 25) tip = 'Zaostávaš, v priemere o ' + Math.round(mean) + ' ms. Ak sa to opakuje pri každom leveli, spusti kalibráciu.';
   else tip = 'Tempo držíš presne, v priemere na ' + Math.abs(Math.round(mean)) + ' ms od metronómu.';
-  result(lv, { stars, acc, score: g.score, combo: g.maxCombo, miss: g.miss, tip, slow: g.slow });
+  result(lv, { stars, acc, score: g.score, combo: g.maxCombo, miss: g.miss, tip, xp, goalHit });
 }
 
 // ---------- obrazovky ----------
 let current = null;
-function show(id) { ['home', 'game', 'result', 'report', 'editor'].forEach(s => $('#' + s).hidden = s !== id); window.scrollTo(0, 0); }
+function show(id) { ['home', 'game', 'result', 'report', 'editor', 'between'].forEach(s => $('#' + s).hidden = s !== id); window.scrollTo(0, 0); }
 const starHtml = n => '<i>' + '★'.repeat(n) + '</i>' + '★'.repeat(3 - n);
 function result(lv, r) {
   current = lv;
   $('#r-level').textContent = lv.venue + ' · ' + lv.name;
   const idx = ALL.findIndex(l => l.id === lv.id), next = idx >= 0 ? ALL[idx + 1] : null;
   if (r.calib) {
-    $('#r-stars').innerHTML = ''; $('#r-title').textContent = 'Kalibrácia'; $('#r-tip').textContent = r.calib;
+    $('#r-stars').innerHTML = ''; $('#r-title').textContent = 'Kalibrácia'; $('#r-tip').textContent = r.calib; $('#r-xp').textContent = ''; $('#r-slow').hidden = true;
     document.querySelector('#result .grid4').hidden = true; $('#r-next').hidden = true;
   } else {
     document.querySelector('#result .grid4').hidden = false;
     $('#r-stars').innerHTML = starHtml(r.stars);
     $('#r-title').textContent = r.stars === 3 ? 'Parádne zahrané!' : r.stars === 2 ? 'Výborne!' : r.stars === 1 ? 'Level splnený' : 'Ešte to chce tréning';
     $('#r-acc').textContent = r.acc + ' %'; $('#r-score').textContent = r.score; $('#r-combo').textContent = r.combo; $('#r-miss').textContent = r.miss;
-    $('#r-tip').textContent = r.tip + (r.slow ? ' V pomalom tempe sa hviezdy nezapisujú.' : '');
+    $('#r-tip').textContent = r.tip; $('#r-slow').hidden = false;
+    $('#r-xp').textContent = '+' + r.xp + ' XP' + (r.goalHit ? ' · denný cieľ splnený!' : '');
     $('#r-next').hidden = !(next && unlocked(idx + 1));
   }
   show('result'); renderHome();
@@ -478,25 +535,28 @@ function renderHome() {
   $('#st-stars').textContent = total + '/' + ALL.length * 3;
   $('#st-streak').textContent = S.streak || 0;
   $('#rank').textContent = total >= 33 ? 'Hviezda pódia' : total >= 24 ? 'Klubový bubeník' : total >= 15 ? 'Bubeník zo skúšobne' : total >= 6 ? 'Garážový bubeník' : 'Nováčik';
-  $('#opt-slow').setAttribute('aria-pressed', S.slow); $('#opt-guide').setAttribute('aria-pressed', S.guide);
+  $('#opt-guide').setAttribute('aria-pressed', S.guide);
+  const dx = (S.dayXp && S.dayXp.d === ymd(new Date())) ? S.dayXp.xp : 0;
+  $('#st-goal').textContent = dx + ' / ' + GOAL + ' XP'; $('#st-goalbar').style.width = Math.min(100, dx / GOAL * 100) + '%';
   const tour = $('#tour'); tour.textContent = '';
-  let i = 0;
-  for (const v of VENUES) {
-    const sec = document.createElement('div'); sec.className = 'venue';
-    sec.innerHTML = '<div><h2></h2><p class="muted"></p></div><div class="tickets"></div>';
-    sec.querySelector('h2').textContent = v.name; sec.querySelector('p').textContent = v.sub;
-    for (const l of v.levels) {
-      const idx = i++, b = document.createElement('button'); b.className = 'ticket'; b.disabled = !unlocked(idx);
-      b.innerHTML = '<div class="row"><span class="label"></span><span class="bpm"></span></div><h3></h3><div class="stars"></div>';
-      b.querySelector('.label').textContent = 'Level ' + (idx + 1);
-      b.querySelector('.bpm').textContent = l.bpm + ' BPM';
-      b.querySelector('h3').textContent = l.name;
-      b.querySelector('.stars').innerHTML = b.disabled ? 'zamknuté' : starHtml(S.stars[l.id] || 0);
+  const UC = ['--brass', '--skin', '--kick', '--good'];
+  let i = 0, curSet = false;
+  VENUES.forEach((v, vi) => {
+    const unit = el('div', null, 'unit'); unit.style.setProperty('--uc', 'var(' + UC[vi % 4] + ')');
+    const head = el('div', null, 'unit-head'); head.appendChild(el('p', (vi + 1) + '. zastávka turné', 'label')); head.appendChild(el('h2', v.name)); head.appendChild(el('p', v.sub)); unit.appendChild(head);
+    const nodes = el('div', null, 'nodes');
+    v.levels.forEach(l => {
+      const idx = i++, open = unlocked(idx), st = S.stars[l.id] || 0, cur = open && !st && !curSet; if (cur) curSet = true;
+      const b = el('button', null, 'node' + (cur ? ' cur' : '')); b.disabled = !open; b.style.setProperty('--dx', [0, 46, 0, -46][idx % 4] + 'px');
+      b.appendChild(el('span', String(idx + 1), 'disc'));
+      if (cur) b.appendChild(el('span', 'Začni tu', 'go'));
+      b.appendChild(el('span', l.name, 'nm'));
+      const sx = el('span', null, 'stars'); if (open) sx.innerHTML = starHtml(st); else sx.textContent = 'zamknuté'; b.appendChild(sx);
       b.addEventListener('click', () => start(ALL[idx]));
-      sec.querySelector('.tickets').appendChild(b);
-    }
-    tour.appendChild(sec);
-  }
+      nodes.appendChild(b);
+    });
+    unit.appendChild(nodes); tour.appendChild(unit);
+  });
   const sec = document.createElement('div'); sec.className = 'venue';
   sec.innerHTML = '<div><h2>Z učebnice</h2><p class="muted">Vlastné cvičenia podľa nôt z učebnice alebo od učiteľa.</p></div><div class="tickets"></div><div class="bar"></div>';
   for (const e of customList()) {
@@ -556,12 +616,14 @@ $('#opt-mic').addEventListener('click', async () => {
   } catch (e) { io('Mikrofón tu nie je dostupný alebo nebol povolený. Otvor súbor hry priamo v prehliadači na počítači.'); }
 });
 
-$('#opt-slow').addEventListener('click', () => { S.slow = !S.slow; save(); renderHome(); });
 $('#opt-guide').addEventListener('click', () => { S.guide = !S.guide; save(); renderHome(); });
 $('#opt-calib').addEventListener('click', () => start(CALIB));
 $('#g-back').addEventListener('click', () => { stop(); show('home'); });
 $('#r-home').addEventListener('click', () => show('home'));
-$('#r-again').addEventListener('click', () => start(current));
+$('#r-again').addEventListener('click', () => start(current, current.calib ? null : ['full']));
+$('#r-slow').addEventListener('click', () => start(current, ['slow', 'full']));
+$('#b-go').addEventListener('click', () => run());
+$('#b-home').addEventListener('click', () => show('home'));
 $('#r-next').addEventListener('click', () => { const i = ALL.findIndex(l => l.id === current.id), n = i >= 0 ? ALL[i + 1] : null; if (n) start(n); });
 
 // ---------- vlastné cvičenia z učebnice ----------
