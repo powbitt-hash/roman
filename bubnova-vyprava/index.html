@@ -83,6 +83,19 @@ canvas{display:block;width:100%;height:clamp(230px,40vh,340px);background:var(--
 .btn{padding:11px 20px;border-radius:999px;font-weight:800;background:var(--brass);color:var(--stage)}
 .btn.ghost{background:none;border:2px solid var(--line);color:var(--ink)}
 .btn.ghost:hover{border-color:var(--brass)}
+.field{display:flex;flex-direction:column;gap:4px}
+.field input{font:inherit;color:var(--ink);background:var(--panel);border:2px solid var(--line);border-radius:999px;padding:8px 14px;width:min(100%,220px)}
+.field input:focus-visible{outline:3px solid var(--brass);outline-offset:2px}
+.panel{background:var(--panel);border-radius:var(--r);padding:18px 18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.wrap>*,.panel>*{min-width:0;max-width:100%}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th,td{text-align:right;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{font-size:.72rem;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+tr:last-child td{border-bottom:0}
+.focus li{margin:4px 0}
+.focus{margin:0;padding-left:20px;max-width:65ch}
 </style>
 
 <div class="wrap">
@@ -99,6 +112,10 @@ canvas{display:block;width:100%;height:clamp(230px,40vh,340px);background:var(--
 
   <section id="home">
     <div class="wrap">
+      <div class="bar" style="align-items:flex-end">
+        <label class="field"><span class="label">Meno žiaka</span><input id="student" type="text" maxlength="30" autocomplete="off" placeholder="napr. Miško"></label>
+        <button class="btn" id="opt-report">Report cvičenia</button>
+      </div>
       <div class="bar">
         <button class="chip" id="opt-slow" aria-pressed="false">Pomalé tempo (tréning)</button>
         <button class="chip" id="opt-guide" aria-pressed="true">Počuť vzor</button>
@@ -135,6 +152,22 @@ canvas{display:block;width:100%;height:clamp(230px,40vh,340px);background:var(--
         <button class="pad" data-lane="k" style="--c:var(--kick)">Kopák<small>medzerník</small></button>
       </div>
       <p class="tip" id="g-tip"></p>
+    </div>
+  </section>
+
+  <section id="report" hidden>
+    <div class="wrap">
+      <div class="gamehead">
+        <div><p class="label" id="p-mode">Pre učiteľa a rodiča</p><h2>Report cvičenia</h2></div>
+        <button class="btn ghost" id="p-back">Späť na turné</button>
+      </div>
+      <p class="muted" id="p-status"></p>
+      <div class="bar" id="p-students"></div>
+      <div class="bar">
+        <button class="chip" data-days="7" aria-pressed="true">Posledných 7 dní</button>
+        <button class="chip" data-days="30" aria-pressed="false">Posledných 30 dní</button>
+      </div>
+      <div id="p-body" class="wrap"></div>
     </div>
   </section>
 
@@ -197,7 +230,7 @@ const CALIB = { id: '_calib', name: 'Kalibrácia', venue: 'Nastavenie', bpm: 80,
 
 // ---------- uložený postup ----------
 const KEY = 'bubnova-vyprava-v1';
-let S = { stars: {}, best: {}, streak: 0, last: '', slow: false, guide: true, off: { key: 0, touch: 30, midi: 0, mic: 50 } };
+let S = { stars: {}, best: {}, streak: 0, last: '', slow: false, guide: true, student: '', log: {}, off: { key: 0, touch: 30, midi: 0, mic: 50 } };
 try { const raw = localStorage.getItem(KEY); if (raw) { const p = JSON.parse(raw); S = { ...S, ...p, off: { ...S.off, ...(p.off || {}) } }; } } catch (e) {}
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
 
@@ -369,6 +402,7 @@ function finish() {
   if (S.last !== today) { S.streak = S.last === day(y) ? S.streak + 1 : 1; S.last = today; }
   save();
   const mean = g.dts.length ? g.dts.reduce((a, b) => a + b, 0) / g.dts.length * 1000 : 0;
+  logRun({ l: lv.id, a: acc, s: stars, p: g.score, m: g.miss, n, d: Math.round(mean), h: g.dts.length, t: Math.round(g.end - g.t0), slow: g.slow ? 1 : 0, at: Date.now() });
   let tip;
   if (g.dts.length < n * 0.4) tip = 'Veľa nôt ti ušlo. Zapni si pomalé tempo a skús najprv len počúvať a počítať.';
   else if (mean < -25) tip = 'Ponáhľaš sa, v priemere o ' + Math.round(-mean) + ' ms. Počkaj si na kliknutie metronómu.';
@@ -379,7 +413,7 @@ function finish() {
 
 // ---------- obrazovky ----------
 let current = null;
-function show(id) { ['home', 'game', 'result'].forEach(s => $('#' + s).hidden = s !== id); window.scrollTo(0, 0); }
+function show(id) { ['home', 'game', 'result', 'report'].forEach(s => $('#' + s).hidden = s !== id); window.scrollTo(0, 0); }
 const starHtml = n => '<i>' + '★'.repeat(n) + '</i>' + '★'.repeat(3 - n);
 function result(lv, r) {
   current = lv;
@@ -475,6 +509,108 @@ $('#g-back').addEventListener('click', () => { stop(); show('home'); });
 $('#r-home').addEventListener('click', () => show('home'));
 $('#r-again').addEventListener('click', () => start(current));
 $('#r-next').addEventListener('click', () => { const n = ALL[ALL.findIndex(l => l.id === current.id) + 1]; if (n) start(n); });
+
+// ---------- záznam cvičenia a report ----------
+// Jeden dokument na žiaka a deň: cvicenia/<žiak>_<RRRR-MM-DD> = { student, day, runs: [...] }.
+const ymd = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+const slug = s => (s || 'ziak').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'ziak';
+let db = null, remote = null, repState = 'local', canWrite = null, repDays = 7, repStudent = null, queue = Promise.resolve();
+function logRun(run) {
+  const day = ymd(new Date()), name = (S.student || '').trim() || 'Žiak', id = slug(name) + '_' + day;
+  const doc = S.log[id] || (S.log[id] = { student: name, day, runs: [] });
+  doc.student = name; doc.runs.push(run);
+  const old = new Date(); old.setDate(old.getDate() - 60); const lim = ymd(old);
+  for (const k in S.log) if (S.log[k].day < lim) delete S.log[k];
+  save();
+  if (db && canWrite !== false) queue = queue.then(async () => {
+    const seen = new Set(), runs = [];
+    for (const r of [...((remote && remote.get(id) || {}).runs || []), ...S.log[id].runs]) if (r && !seen.has(r.at)) { seen.add(r.at); runs.push(r); }
+    runs.sort((a, b) => a.at - b.at);
+    try { await db.doc('cvicenia/' + id).set({ student: name, day, runs }); }
+    catch (e) { if (e && e.code === 'invalid_argument') canWrite = false; repState = e && e.code === 'quota_exceeded' ? 'full' : repState; }
+  });
+}
+function allDocs() {
+  const m = new Map();
+  if (remote) remote.forEach((v, k) => m.set(k, v));
+  for (const k in S.log) { // lokálne záznamy, ktoré ešte nie sú v zdieľanom úložisku
+    const have = new Set(((m.get(k) || {}).runs || []).map(r => r.at)), extra = S.log[k].runs.filter(r => !have.has(r.at));
+    if (!m.has(k)) m.set(k, S.log[k]); else if (extra.length) m.set(k, { ...m.get(k), runs: [...m.get(k).runs, ...extra] });
+  }
+  return [...m.values()].filter(d => d && typeof d.day === 'string' && Array.isArray(d.runs));
+}
+const el = (tag, txt, cls) => { const e = document.createElement(tag); if (txt != null) e.textContent = txt; if (cls) e.className = cls; return e; };
+const num = v => Number.isFinite(Number(v)) ? Number(v) : 0;
+function table(head, rows) {
+  const w = el('div', null, 'scroll'), t = el('table'), tr = el('tr');
+  head.forEach(h => tr.appendChild(el('th', h))); t.appendChild(tr);
+  rows.forEach(r => { const x = el('tr'); r.forEach(c => x.appendChild(el('td', String(c)))); t.appendChild(x); });
+  w.appendChild(t); return w;
+}
+function renderReport() {
+  if ($('#report').hidden) return;
+  $('#p-status').textContent = repState === 'live' ? 'Záznamy sú uložené pri tejto stránke. Vidí ich každý, komu ju nazdieľaš, teda aj učiteľ.'
+    : repState === 'loading' ? 'Načítavam zdieľané záznamy…'
+    : repState === 'slow' ? 'Zdieľané záznamy sa zatiaľ nepodarilo načítať. Zobrazené údaje môžu byť neúplné.'
+    : repState === 'full' ? 'Úložisko záznamov je plné, nové cvičenia sa už nezdieľajú.'
+    : 'Záznamy sú uložené len v tomto zariadení. Zdieľaný report funguje na zverejnenej stránke.';
+  $('#p-mode').textContent = canWrite === false ? 'Pohľad učiteľa (len na čítanie)' : 'Pre učiteľa a rodiča';
+  const docs = allDocs(), names = [...new Set(docs.map(d => String(d.student || 'Žiak')))].sort();
+  if (!names.includes(repStudent)) repStudent = names.includes((S.student || '').trim()) ? S.student.trim() : names[0] || null;
+  const ps = $('#p-students'); ps.textContent = '';
+  if (names.length > 1) names.forEach(nm => { const b = el('button', nm, 'chip'); b.setAttribute('aria-pressed', nm === repStudent); b.addEventListener('click', () => { repStudent = nm; renderReport(); }); ps.appendChild(b); });
+  document.querySelectorAll('[data-days]').forEach(b => b.setAttribute('aria-pressed', Number(b.dataset.days) === repDays));
+  const body = $('#p-body'); body.textContent = '';
+  const from = new Date(); from.setDate(from.getDate() - repDays + 1); const lim = ymd(from);
+  const mine = docs.filter(d => String(d.student || 'Žiak') === repStudent && d.day >= lim).sort((a, b) => a.day < b.day ? 1 : -1);
+  const runs = mine.flatMap(d => d.runs.map(r => ({ ...r, day: d.day })));
+  if (!runs.length) { const p = el('div', null, 'panel'); p.appendChild(el('h3', names.length ? 'V tomto období žiadne cvičenie' : 'Zatiaľ žiadne cvičenie'));
+    p.appendChild(el('p', 'Po dohraní prvého levelu sa tu objaví, kedy žiak cvičil, ako dlho a ako presne hral.', 'muted')); body.appendChild(p); return; }
+  const sec = runs.reduce((a, r) => a + num(r.t), 0), hits = runs.reduce((a, r) => a + num(r.h), 0);
+  const acc = Math.round(runs.reduce((a, r) => a + num(r.a), 0) / runs.length);
+  const mean = hits ? Math.round(runs.reduce((a, r) => a + num(r.d) * num(r.h), 0) / hits) : 0;
+  const sum = el('div', null, 'panel'), g = el('div', null, 'grid4');
+  [[mine.length + ' z ' + repDays, 'dní s cvičením'], [Math.round(sec / 60) + ' min', 'čas hrania'], [runs.length, 'odohrané levely'], [acc + ' %', 'priemerná presnosť'],
+   [Math.abs(mean) + ' ms', mean < -15 ? 'ponáhľa sa' : mean > 15 ? 'zaostáva' : 'odchýlka od tempa']].forEach(([v, l]) => { const c = el('div'); c.appendChild(el('b', String(v))); c.appendChild(el('span', l, 'label')); g.appendChild(c); });
+  sum.appendChild(el('h3', repStudent)); sum.appendChild(g); body.appendChild(sum);
+  // podľa levelov
+  const by = new Map();
+  runs.sort((a, b) => num(a.at) - num(b.at)).forEach(r => { const k = String(r.l); const o = by.get(k) || { n: 0, best: 0, last: 0, stars: 0, slow: 0 }; o.n++; o.best = Math.max(o.best, num(r.a)); o.last = num(r.a); o.stars = Math.max(o.stars, r.slow ? 0 : num(r.s)); o.slow += r.slow ? 1 : 0; by.set(k, o); });
+  const lvName = id => { const i = ALL.findIndex(l => l.id === id); return i < 0 ? id : (i + 1) + '. ' + ALL[i].name; };
+  const weak = [...by.entries()].filter(([, o]) => o.best < 75).sort((a, b) => b[1].n - a[1].n).slice(0, 3);
+  const fp = el('div', null, 'panel'); fp.appendChild(el('h3', 'Na čo sa zamerať'));
+  if (weak.length) { const ul = el('ul', null, 'focus'); weak.forEach(([id, o]) => ul.appendChild(el('li', lvName(id) + ': ' + o.n + ' pokusov, najlepšia presnosť ' + o.best + ' %.'))); fp.appendChild(ul); }
+  else fp.appendChild(el('p', 'Všetky hrané levely zvládol aspoň na 75 %. Môže pokračovať na ďalší level alebo skúsiť rýchlejšie tempo.'));
+  if (mean < -25) fp.appendChild(el('p', 'Celkovo hrá pred dobou. Pomôže hrať s metronómom v pomalom tempe.'));
+  if (mean > 25) fp.appendChild(el('p', 'Celkovo hrá za dobou. Ak je to pri každom leveli rovnaké, môže ísť o oneskorenie zariadenia: treba spustiť kalibráciu.'));
+  body.appendChild(fp);
+  const lp = el('div', null, 'panel'); lp.appendChild(el('h3', 'Podľa levelov'));
+  lp.appendChild(table(['Level', 'Pokusy', 'Najlepšia', 'Posledná', 'Hviezdy', 'V pomalom tempe'], [...by.entries()].sort((a, b) => ALL.findIndex(l => l.id === a[0]) - ALL.findIndex(l => l.id === b[0])).map(([id, o]) => [lvName(id), o.n, o.best + ' %', o.last + ' %', o.stars + '/3', o.slow])));
+  body.appendChild(lp);
+  const dp = el('div', null, 'panel'); dp.appendChild(el('h3', 'Podľa dní'));
+  dp.appendChild(table(['Deň', 'Čas hrania', 'Levely', 'Presnosť'], mine.map(d => { const [y, m, dd] = d.day.split('-'); const t = d.runs.reduce((a, r) => a + num(r.t), 0);
+    return [Number(dd) + '. ' + Number(m) + '. ' + y, Math.max(1, Math.round(t / 60)) + ' min', d.runs.length, Math.round(d.runs.reduce((a, r) => a + num(r.a), 0) / d.runs.length) + ' %']; })));
+  body.appendChild(dp);
+}
+(async () => {
+  try { db = (window.claude && window.claude.use) ? await window.claude.use('db') : null; } catch (e) { db = null; }
+  if (!db) { renderReport(); return; }
+  repState = 'loading'; renderReport();
+  const timer = setTimeout(() => { if (repState === 'loading') { repState = 'slow'; renderReport(); } }, 10000);
+  db.collection('cvicenia').onSnapshot(snap => {
+    remote = new Map(snap.docs.map(d => [d.id, d.data()]));
+    if (!snap.metadata.fromCache) { clearTimeout(timer); repState = 'live'; }
+    renderReport();
+  }, () => { clearTimeout(timer); repState = 'slow'; renderReport(); });
+  try { const u = await window.claude.use('user'); canWrite = u ? await u.can('data.write') : null; } catch (e) {}
+  if (canWrite === false && !$('#home').hidden) show('report');
+  renderReport();
+})();
+$('#student').value = S.student || '';
+$('#student').addEventListener('change', e => { S.student = e.target.value.trim(); save(); });
+$('#opt-report').addEventListener('click', () => { show('report'); renderReport(); });
+$('#p-back').addEventListener('click', () => show('home'));
+document.querySelectorAll('[data-days]').forEach(b => b.addEventListener('click', () => { repDays = Number(b.dataset.days); renderReport(); }));
 
 renderHome();
 window.__bubny = { get G() { return G; }, hit, start, ALL, get ctx() { return ctx; } };
