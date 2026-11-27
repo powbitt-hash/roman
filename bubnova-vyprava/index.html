@@ -81,6 +81,7 @@ details p{margin-top:10px;font-size:.9rem;max-width:65ch}
 .hud b{font-family:var(--display);font-size:1.7rem;line-height:1;font-variant-numeric:tabular-nums;display:block}
 .scope{display:block;width:100%;height:190px;margin:10px 0;border-radius:var(--r);background:var(--panel)}#scope-game{height:130px}
 .dct{opacity:.55;transition:opacity .15s,transform .1s}.dct.cur{opacity:1;box-shadow:0 0 0 3px var(--c)}.dct.hit{opacity:1;transform:scale(1.06);box-shadow:0 0 24px var(--c)}.dct small.n{display:block!important}
+#dc-cue{height:clamp(170px,30vh,260px);margin:10px 0}.dcsum{margin:10px 0;padding-left:20px;line-height:1.6;max-width:65ch}.dcsum b{color:var(--brass)}
 .tune{display:grid;gap:10px;margin:10px 0;max-width:560px}.tune label{display:grid;grid-template-columns:1fr auto;gap:2px 12px;align-items:center}.tune input{grid-column:1/-1;width:100%}.tune b{font-variant-numeric:tabular-nums}.tune small{grid-column:1/-1;color:var(--muted)}
 #mic-meter div{transition:width .08s linear}#mic-meter.hit div{background:var(--good)}
 .prog{flex:1;min-width:120px;height:8px;border-radius:99px;background:var(--panel);overflow:hidden;align-self:center}
@@ -265,13 +266,15 @@ tr:last-child td{border-bottom:0}
         <button class="btn ghost" id="dc-back">Späť na turné</button>
       </div>
       <p id="dc-text" class="muted" style="max-width:65ch"></p>
+      <canvas id="dc-cue" hidden></canvas>
+      <ul id="dc-sum" class="dcsum" hidden></ul>
       <div class="pads" id="dc-tiles">
         <div class="pad dct" data-lane="k" style="--c:var(--kick)">Kopák<small class="n"></small></div>
         <div class="pad dct" data-lane="s" style="--c:var(--skin)">Rytmičák<small class="n"></small></div>
         <div class="pad dct" data-lane="h" style="--c:var(--brass)">Hi-hat<small class="n"></small></div>
       </div>
       <canvas class="scope" id="scope-cal"></canvas>
-      <div class="bar"><button class="btn" id="dc-done" hidden>Hotovo</button><button class="btn ghost" id="dc-redo">Začať znova</button></div>
+      <div class="bar"><button class="btn" id="dc-start">Začať kalibráciu</button><button class="btn" id="dc-done" hidden>Hotovo</button><button class="btn ghost" id="dc-test" hidden>Voľný test</button><button class="btn ghost" id="dc-redo">Začať znova</button></div>
     </div>
   </section>
 
@@ -795,36 +798,175 @@ function classify(vec) {
   return best.idx.filter((i, j) => rel[j] >= sens && (rel[j] === top || rel[j] >= Math.max(0.6, top * 0.5))).map(i => DRUMS[i]);
 }
 let DC = null; // stav sprievodcu kalibráciou bubnov
-const DC_N = 6;
+const DC_STEPS = [
+  { id: 'quiet', kind: 'quiet', dur: 3, title: 'Ticho v miestnosti', text: 'Polož paličky a chvíľu nehraj. Appka zmeria hluk v miestnosti a podľa neho nastaví citlivosť mikrofónu.' },
+  { id: 'k', kind: 'learn', lane: 'k', n: 6, gap: 1.6, title: 'Kopák samostatne', text: 'Šliapni na kopák vždy, keď nota dorazí k čiare. Normálnou silou, ako pri hre. Ostatné bubny nechaj ticho.' },
+  { id: 's', kind: 'learn', lane: 's', n: 6, gap: 1.6, title: 'Rytmičák samostatne', text: 'Udri do rytmičáka vždy, keď nota dorazí k čiare. Normálnou silou, ako pri hre.' },
+  { id: 'h', kind: 'learn', lane: 'h', n: 6, gap: 1.6, title: 'Hi-hat samostatne', text: 'Udri do zatvoreného hi-hatu vždy, keď nota dorazí k čiare.' },
+  { id: 'seq', kind: 'check', gap: 1.0, pat: [['k'], ['h'], ['s'], ['h'], ['k'], ['h'], ['s'], ['h']], title: 'Údery za sebou', text: 'Teraz sa bubny striedajú. Udri vždy ten bubon, ktorého nota dorazí k čiare.' },
+  { id: 'kh', kind: 'check', gap: 1.6, pat: [['k', 'h'], ['k', 'h'], ['k', 'h'], ['k', 'h']], title: 'Kopák a hi-hat naraz', text: 'Udri kopák a hi-hat v tom istom okamihu, keď noty dorazia k čiare.' },
+  { id: 'sh', kind: 'check', gap: 1.6, pat: [['s', 'h'], ['s', 'h'], ['s', 'h'], ['s', 'h']], title: 'Rytmičák a hi-hat naraz', text: 'Udri rytmičák a hi-hat v tom istom okamihu, keď noty dorazia k čiare.' },
+];
+const DC_LEAD = 3, DC_WIN = 0.3, DC_ROWS = ['h', 's', 'k'];
+const dcCos = (a, b) => a.reduce((s, x, k) => s + x * b[k], 0) / vnorm(a) / vnorm(b);
+const dcFp = vs => { const fp = new Array(8).fill(0); vs.forEach(v => { const n = vnorm(v); v.forEach((x, k) => fp[k] += x / n); }); const n = vnorm(fp); return fp.map(x => x / n); };
+const dcSame = (a, b) => a.length === b.length && a.every(x => b.includes(x));
+const dcNow = () => ctx ? ctx.currentTime : 0;
+function dcNew() { return { i: 0, phase: 'intro', cues: [], dts: [], lab: [], res: {}, noise: 0, falseHits: 0, msg: '', flash: null }; }
 function drumCalOpen() {
   if (!micTimer) { $('#opt-mic').click(); }
-  DC = { step: 0, got: { k: [], s: [], h: [] }, test: false };
-  show('drumcal'); drumCalRender();
+  DC = dcNew(); show('drumcal'); drumCalRender();
+  const me = DC; (function loop() { if (DC !== me) return; dcTick(); dcDraw(); requestAnimationFrame(loop); })();
 }
-function drumCalRender() {
-  const d = DRUMS[DC.step];
-  $('#dc-step').textContent = DC.test ? 'Test rozpoznania' : 'Krok ' + (DC.step + 1) + ' z 3';
-  $('#dc-title').textContent = DC.test ? 'Udri do ľubovoľného bubna' : 'Udri ' + DC_N + '× do: ' + DRUM_NAME[d];
-  $('#dc-text').textContent = DC.test ? 'Rozpoznaný bubon sa rozsvieti. Ak sa rozsvieti nesprávny, spusti kalibráciu znova a udieraj rovnako silno ako pri hre.'
-    : 'Udieraj len do tohto bubna, normálnou silou ako pri hre, s krátkou pauzou medzi údermi. Ostatné bubny nechaj stíchnuť.';
-  document.querySelectorAll('#dc-tiles .dct').forEach(t => { const ln = t.dataset.lane; t.classList.toggle('cur', !DC.test && ln === d);
-    t.querySelector('.n').textContent = DC.test ? '' : Math.min(DC_N, DC.got[ln].length) + ' / ' + DC_N; });
-  $('#dc-done').hidden = !DC.test; $('#dc-redo').hidden = !DC.test && DC.step === 0 && !DC.got.k.length;
+function dcStartStep() {
+  if (!micTimer || !ctx) { DC.msg = 'Mikrofón ešte nepočúva. Povoľ mikrofón a skús znova.'; drumCalRender(); return; }
+  const st = DC_STEPS[DC.i]; DC.phase = 'run'; DC.msg = ''; DC.t0 = dcNow() + DC_LEAD; DC.cues = [];
+  if (st.kind === 'quiet') { DC.noise = 0; DC.falseHits = 0; }
+  else if (st.kind === 'learn') for (let k = 0; k < st.n + 6; k++) DC.cues.push({ t: DC.t0 + k * st.gap, exp: [st.lane], hits: [] });
+  else st.pat.forEach((p, k) => DC.cues.push({ t: DC.t0 + k * st.gap, exp: p, hits: [] }));
+  drumCalRender();
+}
+function dcNext(msg) { DC.phase = 'pause'; DC.msg = msg; DC.until = performance.now() + 1600; drumCalRender(); }
+function dcRetry(msg) { DC.phase = 'retry'; DC.msg = msg; DC.until = performance.now() + 3500; drumCalRender(); }
+function dcTick() {
+  if (!DC || !ctx) return;
+  const now = dcNow(), st = DC_STEPS[DC.i];
+  if ((DC.phase === 'pause' || DC.phase === 'retry') && performance.now() > DC.until) {
+    if (DC.phase === 'pause') DC.i++;
+    if (DC.i >= DC_STEPS.length) { dcTune(); DC.phase = 'summary'; DC.msg = ''; drumCalRender(); } else dcStartStep();
+    return;
+  }
+  if (DC.phase !== 'run') return;
+  if (st.kind === 'quiet') {
+    if (now > DC.t0 && SC) DC.noise = Math.max(DC.noise, SC.lvl);
+    if (now > DC.t0 + st.dur) dcQuietDone();
+  } else if (st.kind === 'learn') {
+    if (now > DC.cues[DC.cues.length - 1].t + DC_WIN + 0.1) { const got = DC.cues.filter(c => c.hits.length).length;
+      dcRetry(got < 3 ? 'Zachytil som len ' + got + ' úderov. Udieraj o niečo silnejšie alebo posuň tablet bližšie k bubnom. Skúsime to znova.'
+        : 'Údery neznejú rovnako, asi sa ozval aj iný bubon. Udieraj len do jedného bubna a nechaj ostatné stíchnuť. Skúsime to znova.'); }
+  } else if (now > DC.cues[DC.cues.length - 1].t + DC_WIN + 0.1) dcCheckDone();
+}
+function dcQuietDone() {
+  const st = DC_STEPS[DC.i], before = S.micSens || 6;
+  // prah musí byť nad hlukom miestnosti; citlivosť len znižujeme, nikdy nezvyšujeme
+  const need = Math.max(DC.noise * 2, DC.falseHits ? micThr() + 0.03 : 0);
+  if (need > micThr()) S.micSens = Math.max(2, Math.min(10, Math.floor(10 - (need - 0.02) / 0.015)));
+  DC.res.quiet = { noise: DC.noise, falseHits: DC.falseHits, from: before, to: S.micSens || 6 }; save();
+  dcNext(S.micSens !== before ? 'V miestnosti je hluk, citlivosť som znížil z ' + before + ' na ' + S.micSens + '.' : 'Ticho je v poriadku.');
+}
+function dcLearnTry() {
+  const st = DC_STEPS[DC.i], vs = DC.cues.filter(c => c.hits.length).map(c => c.hits[0].vec);
+  if (vs.length < st.n) return;
+  const fp0 = dcFp(vs), keep = vs.filter(v => dcCos(v, fp0) >= 0.9);
+  if (keep.length < st.n - 1) return; // čakáme na ďalšie údery, kým nie je dosť podobných
+  const fp = dcFp(keep), lens = keep.map(vnorm).sort((a, b) => a - b);
+  S.drumFp = S.drumFp || {}; S.drumLvl = S.drumLvl || {}; S.drumFp[st.lane] = fp; S.drumLvl[st.lane] = lens[lens.length >> 1];
+  DC.res[st.lane] = { sim: keep.reduce((s, v) => s + dcCos(v, fp), 0) / keep.length, n: keep.length, drop: vs.length - keep.length }; save();
+  DC.cues = DC.cues.filter(c => c.t <= DC.cues.find(c2 => c2.hits.length && c2.hits[0].vec === vs[vs.length - 1]).t);
+  dcNext('Výborne, ' + DRUM_NAME[st.lane] + ' je naučený.');
+}
+function dcCheckDone() {
+  const st = DC_STEPS[DC.i]; let ok = 0;
+  DC.cues.forEach(c => { if (c.hits.length) { DC.lab.push({ step: st.id, vec: c.hits[0].vec, exp: c.exp }); } if (c.ok) ok++; });
+  const got = DC.cues.filter(c => c.hits.length).length;
+  if (got < Math.ceil(DC.cues.length / 2)) { DC.lab = DC.lab.filter(l => l.step !== st.id); return dcRetry('Zachytil som len ' + got + ' z ' + DC.cues.length + ' úderov. Skúsime to znova.'); }
+  DC.res[st.id] = { ok, tot: DC.cues.length };
+  dcNext(ok === DC.cues.length ? 'Paráda, všetko rozpoznané.' : 'Rozpoznané ' + ok + ' z ' + DC.cues.length + '. Na konci to appka doladí.');
+}
+function dcTune() {
+  // prah rozpoznania: vyskúšame hodnoty a necháme tú, pri ktorej sedí najviac kontrolných úderov
+  const prev = S.drumGate || 30;
+  if (DC.lab.length && DRUMS.every(d => S.drumFp && S.drumFp[d])) {
+    let best = prev, bs = -1;
+    for (let g = 10; g <= 80; g += 5) { S.drumGate = g; const sc = DC.lab.filter(l => dcSame(classify(l.vec), l.exp)).length;
+      if (sc > bs || (sc === bs && Math.abs(g - prev) < Math.abs(best - prev))) { bs = sc; best = g; } }
+    S.drumGate = best;
+    DC_STEPS.filter(s => s.kind === 'check').forEach(s => { const L = DC.lab.filter(l => l.step === s.id); if (DC.res[s.id]) DC.res[s.id].tuned = L.filter(l => dcSame(classify(l.vec), l.exp)).length; });
+  }
+  DC.res.gate = { from: prev, to: S.drumGate || 30 };
+  // zdvojené údery: predĺžime najkratší odstup
+  const gap0 = S.micGap || 110;
+  if (DC.dts.length) { const need = Math.max(...DC.dts) * 1000 + 30; if (need > gap0) S.micGap = Math.min(250, Math.ceil(need / 5) * 5); }
+  DC.res.gap = { n: DC.dts.length, from: gap0, to: S.micGap || 110 };
+  const F = DRUMS.map(d => S.drumFp && S.drumFp[d]); DC.res.close = [];
+  if (F.every(Boolean)) [[0, 1], [0, 2], [1, 2]].forEach(([a, b]) => { if (dcCos(F[a], F[b]) > 0.97) DC.res.close.push(DRUMS[a] + DRUMS[b]); });
+  S.drumOn = true; save();
 }
 function drumCalHit(vec, t) {
-  if (DC.test) { const lanes = classify(vec); scopeHit(t, lanes, !lanes.length); document.querySelectorAll('#dc-tiles .dct').forEach(t => { if (lanes.includes(t.dataset.lane)) { t.classList.add('hit'); setTimeout(() => t.classList.remove('hit'), 250); } });
-    $('#dc-text').textContent = lanes.length ? 'Rozpoznané: ' + lanes.map(l => DRUM_NAME[l]).join(' + ') + '.' : 'Úder bol príliš slabý, appka ho ignoruje.'; return; }
-  const d = DRUMS[DC.step]; DC.got[d].push(vec.slice()); scopeHit(t, [d]);
-  const tile = document.querySelector('#dc-tiles .dct[data-lane="' + d + '"]'); tile.classList.add('hit'); setTimeout(() => tile.classList.remove('hit'), 200);
-  if (DC.got[d].length >= DC_N) {
-    // odtlačok = priemer normovaných vektorov, sila = medián dĺžok
-    const fp = new Array(8).fill(0); DC.got[d].forEach(v => { const n = vnorm(v); v.forEach((x, k) => fp[k] += x / n); });
-    const n = vnorm(fp); S.drumFp = S.drumFp || {}; S.drumLvl = S.drumLvl || {};
-    S.drumFp[d] = fp.map(x => x / n); const lens = DC.got[d].map(vnorm).sort((a, b) => a - b); S.drumLvl[d] = lens[lens.length >> 1];
-    if (DC.step < 2) DC.step++; else { DC.test = true; S.drumOn = true; }
-    save();
-  }
+  const now = dcNow();
+  if (DC.phase === 'test') { const lanes = classify(vec); scopeHit(t, lanes, !lanes.length); dcLight(lanes);
+    DC.msg = lanes.length ? 'Rozpoznané: ' + lanes.map(l => DRUM_NAME[l]).join(' + ') + '.' : 'Úder bol príliš slabý, appka ho ignoruje.'; drumCalRender(); return; }
+  if (DC.phase !== 'run' || now < DC.t0 - DC_WIN) { scopeHit(t, [], true); return; }
+  const st = DC_STEPS[DC.i];
+  if (st.kind === 'quiet') { if (now > DC.t0) DC.falseHits++; scopeHit(t, [], true); return; }
+  const tA = t - (S.off.mic || 0) / 1000;
+  let c = null; for (const q of DC.cues) if (Math.abs(tA - q.t) < DC_WIN && (!c || Math.abs(tA - q.t) < Math.abs(tA - c.t))) c = q;
+  if (!c) { scopeHit(t, [], true); DC.flash = { t: now, text: 'Počkaj, kým nota dorazí k čiare' }; return; }
+  if (c.hits.length) { DC.dts.push(t - c.hits[0].t); c.hits.push({ t }); scopeHit(t, [], true); DC.flash = { t: now, text: 'Jeden úder som počul dvakrát' }; return; }
+  c.hits.push({ t, tA, vec: vec.slice() });
+  if (st.kind === 'learn') { scopeHit(t, [st.lane]); dcLight([st.lane]); dcLearnTry(); }
+  else { const lanes = classify(vec); c.got = lanes; c.ok = dcSame(lanes, c.exp); scopeHit(t, lanes, !lanes.length); dcLight(lanes); }
   drumCalRender();
+}
+function dcLight(lanes) { document.querySelectorAll('#dc-tiles .dct').forEach(t => { if (lanes.includes(t.dataset.lane)) { t.classList.add('hit'); setTimeout(() => t.classList.remove('hit'), 220); } }); }
+function drumCalRender() {
+  if (!DC) return;
+  const st = DC_STEPS[Math.min(DC.i, DC_STEPS.length - 1)], ph = DC.phase;
+  $('#dc-step').textContent = ph === 'intro' ? 'Sprievodca kalibráciou' : ph === 'summary' ? 'Hotovo' : ph === 'test' ? 'Voľný test' : 'Krok ' + (DC.i + 1) + ' z ' + DC_STEPS.length;
+  $('#dc-title').textContent = ph === 'intro' ? 'Naučme appku tvoje bubny' : ph === 'summary' ? 'Kalibrácia dokončená' : ph === 'test' ? 'Udri do ľubovoľného bubna' : st.title;
+  $('#dc-text').textContent = DC.msg || (ph === 'intro' ? 'Prejdeme ' + DC_STEPS.length + ' krátkych krokov, asi 2 minúty. Appka ti vždy povie, čo máš urobiť: najprv ticho, potom každý bubon zvlášť, potom údery za sebou a nakoniec dva bubny naraz. Polož tablet tak, aby mikrofón mieril k bubnom, a vezmi paličky.'
+    : ph === 'summary' ? 'Tu je, čo sa appka naučila a čo nastavila. Ak niečo nesedí, spusti kalibráciu znova.'
+    : ph === 'test' ? 'Rozpoznaný bubon sa rozsvieti.' : st.text);
+  const lanes = ph === 'run' || ph === 'pause' || ph === 'retry' ? (st.kind === 'learn' ? [st.lane] : st.kind === 'check' ? [...new Set(st.pat.flat())] : []) : [];
+  document.querySelectorAll('#dc-tiles .dct').forEach(t => { const ln = t.dataset.lane; t.classList.toggle('cur', lanes.includes(ln));
+    t.querySelector('.n').textContent = ph === 'run' && st.kind === 'learn' && ln === st.lane ? Math.min(st.n, DC.cues.filter(c => c.hits.length).length) + ' / ' + st.n : DC.res[ln] ? 'naučený' : ''; });
+  $('#dc-start').hidden = ph !== 'intro'; $('#dc-done').hidden = ph !== 'summary' && ph !== 'test'; $('#dc-test').hidden = ph !== 'summary';
+  $('#dc-redo').hidden = ph === 'intro'; $('#dc-cue').hidden = ph === 'summary' || ph === 'intro' || ph === 'test';
+  $('#dc-sum').hidden = ph !== 'summary'; if (ph === 'summary') $('#dc-sum').innerHTML = dcSummary();
+}
+function dcSummary() {
+  const r = DC.res, li = [], pct = x => Math.round(x * 100) + ' %';
+  if (r.quiet) li.push(['Hluk v miestnosti', r.quiet.to !== r.quiet.from ? 'citlivosť znížená z ' + r.quiet.from + ' na ' + r.quiet.to : 'v poriadku, citlivosť ' + r.quiet.to]);
+  DRUMS.forEach(d => { if (r[d]) li.push([DRUM_NAME[d][0].toUpperCase() + DRUM_NAME[d].slice(1), 'zvuk naučený, údery rovnaké na ' + pct(r[d].sim) + (r[d].drop ? ' (' + r[d].drop + ' nepodarené vynechané)' : '')]); });
+  DC_STEPS.filter(s => s.kind === 'check').forEach(s => { const x = r[s.id]; if (x) li.push([s.title, 'správne ' + (x.tuned != null ? x.tuned : x.ok) + ' z ' + x.tot + (x.tuned != null && x.tuned !== x.ok ? ' (po doladení, pôvodne ' + x.ok + ')' : '')]); });
+  if (r.gate) li.push(['Prah rozpoznania bubna', r.gate.to !== r.gate.from ? 'zmenený z ' + r.gate.from + ' na ' + r.gate.to + ' %' : 'ponechaný ' + r.gate.to + ' %']);
+  if (r.gap) li.push(['Zdvojené údery', r.gap.n ? r.gap.n + '×, najkratší odstup predĺžený na ' + r.gap.to + ' ms' : 'žiadne']);
+  (r.close || []).forEach(p => li.push(['Pozor', DRUM_NAME[p[0]] + ' a ' + DRUM_NAME[p[1]] + ' znejú pre mikrofón veľmi podobne. Skús tablet posunúť alebo naladiť bubny.']));
+  return li.map(([a, b]) => '<li><b>' + a + ':</b> ' + b + '</li>').join('');
+}
+function dcDraw() {
+  const cv = $('#dc-cue'); if (!DC || cv.hidden) return;
+  const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight; if (!W || !H) return;
+  if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+  const now = dcNow(), st = DC_STEPS[Math.min(DC.i, DC_STEPS.length - 1)], hitX = Math.max(90, W * 0.22), pps = Math.max(160, W * 0.28), rowH = H / 3;
+  g.textBaseline = 'middle';
+  if (st.kind === 'quiet' && DC.phase === 'run') {
+    const p = Math.max(0, Math.min(1, (now - DC.t0) / st.dur));
+    g.fillStyle = '#f4f0ff'; g.textAlign = 'center'; g.font = '800 26px "Baloo 2",sans-serif';
+    g.fillText(now < DC.t0 ? 'Priprav sa… ' + Math.ceil(DC.t0 - now) : 'Ticho… meriam hluk', W / 2, H / 2 - 18);
+    g.fillStyle = '#3f3785'; g.fillRect(W * 0.2, H / 2 + 14, W * 0.6, 10); g.fillStyle = '#9be58f'; g.fillRect(W * 0.2, H / 2 + 14, W * 0.6 * p, 10);
+    return;
+  }
+  DC_ROWS.forEach((l, r) => { const y = rowH * (r + 0.5); g.strokeStyle = hexA(COL[l], 0.25); g.lineWidth = 2; g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke();
+    g.fillStyle = hexA(COL[l], 0.9); g.font = '800 13px "Baloo 2",sans-serif'; g.textAlign = 'left'; g.fillText(DRUM_NAME[l], 8, y - rowH * 0.3); });
+  g.strokeStyle = '#f4f0ff'; g.lineWidth = 3; g.beginPath(); g.moveTo(hitX, 4); g.lineTo(hitX, H - 4); g.stroke();
+  const R = Math.min(rowH * 0.32, 22);
+  for (const c of DC.cues) {
+    const x = hitX + (c.t - now) * pps; if (x < -40 || x > W + 40) continue;
+    const done = c.hits.length > 0, col = !done ? null : (st.kind === 'learn' || c.ok) ? '#9be58f' : '#ff6b5e';
+    c.exp.forEach(l => { const y = rowH * (DC_ROWS.indexOf(l) + 0.5);
+      g.fillStyle = done ? hexA(COL[l], 0.35) : COL[l]; g.beginPath(); g.arc(x, y, R, 0, 7); g.fill();
+      if (done) { g.strokeStyle = col; g.lineWidth = 3; g.beginPath(); g.arc(x, y, R + 4, 0, 7); g.stroke(); } });
+    if (done && c.hits[0].tA != null) { const ms = Math.round((c.hits[0].tA - c.t) * 1000); g.fillStyle = col; g.font = '800 12px "Baloo 2",sans-serif'; g.textAlign = 'center';
+      g.fillText((ms > 0 ? '+' : '') + ms + ' ms', x, H - 10); }
+    if (st.kind === 'check' && done && c.got && !c.ok) { g.fillStyle = '#ff6b5e'; g.font = '800 11px "Baloo 2",sans-serif'; g.textAlign = 'center';
+      g.fillText(c.got.length ? 'počul: ' + c.got.map(l => DRUM_NAME[l]).join('+') : 'nerozpoznané', x, 10); }
+  }
+  if (DC.phase === 'run' && now < DC.t0) { g.fillStyle = '#f4f0ff'; g.textAlign = 'center'; g.font = '800 54px "Baloo 2",sans-serif'; g.fillText(Math.ceil(DC.t0 - now), W * 0.6, H / 2); }
+  if (DC.phase !== 'run') { g.fillStyle = 'rgba(20,16,50,.75)'; g.fillRect(0, 0, W, H); g.fillStyle = DC.phase === 'retry' ? '#ff6b5e' : '#9be58f'; g.textAlign = 'center';
+    g.font = '800 24px "Baloo 2",sans-serif'; g.fillText(DC.phase === 'retry' ? 'Ešte raz' : 'Ďalší krok', W / 2, H / 2); }
+  if (DC.flash && now - DC.flash.t < 1.2) { g.fillStyle = 'rgba(255,107,94,.9)'; g.textAlign = 'center'; g.font = '800 15px "Baloo 2",sans-serif'; g.fillText(DC.flash.text, W * 0.6, 14); }
 }
 
 // ---------- zvuková vlna z mikrofónu ----------
@@ -927,7 +1069,9 @@ $('#mic-calib').addEventListener('click', () => start(CALIB));
 $('#drum-calib').addEventListener('click', drumCalOpen);
 $('#dc-back').addEventListener('click', () => { show('home'); renderHome(); });
 $('#dc-done').addEventListener('click', () => { show('home'); renderHome(); io('Bubny sú nakalibrované. Teraz ťukni na „Kalibrovať oneskorenie“.'); });
-$('#dc-redo').addEventListener('click', () => { DC = { step: 0, got: { k: [], s: [], h: [] }, test: false }; drumCalRender(); });
+$('#dc-redo').addEventListener('click', () => { DC.i = 0; DC.res = {}; DC.lab = []; DC.dts = []; DC.msg = ''; dcStartStep(); });
+$('#dc-start').addEventListener('click', dcStartStep);
+$('#dc-test').addEventListener('click', () => { DC.phase = 'test'; DC.msg = ''; drumCalRender(); });
 $('#g-back').addEventListener('click', () => { stop(); show('home'); });
 $('#r-home').addEventListener('click', () => show('home'));
 $('#r-again').addEventListener('click', () => start(current, current.calib ? null : ['full']));
@@ -1147,6 +1291,6 @@ document.addEventListener('visibilitychange', () => { if (document.hidden && G &
 
 if ($('#ver').textContent.includes('__')) $('#ver').hidden = true; // verziu dopĺňa len zostavenie aplikácie
 renderHome();
-window.__bubny = { get G() { return G; }, hit, start, ALL, get ctx() { return ctx; } };
+window.__bubny = { get G() { return G; }, hit, start, ALL, get ctx() { return ctx; }, get DC() { return DC; }, drumCalHit, get S() { return S; } };
 })();
 </script>
