@@ -79,6 +79,7 @@ details p{margin-top:10px;font-size:.9rem;max-width:65ch}
 .gamehead{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
 .hud{display:flex;gap:22px;align-items:flex-end;flex-wrap:wrap}
 .hud b{font-family:var(--display);font-size:1.7rem;line-height:1;font-variant-numeric:tabular-nums;display:block}
+#mic-meter div{transition:width .08s linear}#mic-meter.hit div{background:var(--good)}
 .prog{flex:1;min-width:120px;height:8px;border-radius:99px;background:var(--panel);overflow:hidden;align-self:center}
 .prog div{height:100%;width:0;background:var(--brass)}
 canvas{display:block;width:100%;height:clamp(230px,40vh,340px);background:var(--panel);border-radius:var(--r);touch-action:none}
@@ -157,6 +158,7 @@ tr:last-child td{border-bottom:0}
           <button class="chip" id="opt-midi" aria-pressed="false">Elektronické bicie (MIDI)</button>
           <button class="chip" id="opt-mic" aria-pressed="false">Mikrofón (pad, akustické bicie)</button>
         </div>
+        <div class="bar" id="mic-ui" hidden style="align-items:center"><span class="label">Hlasitosť</span><div class="prog" id="mic-meter"><div></div></div><label class="label" style="display:flex;align-items:center;gap:8px">Citlivosť <input id="mic-sens" type="range" min="1" max="10" step="1"></label></div>
         <p class="muted" id="io-status">Bez pripojenia sa hrá klávesmi J, F a medzerníkom alebo ťukaním na pady.</p>
         <p class="muted">Mikrofón rozozná úder, nie to, ktorý bubon znel, a počuje aj reproduktor – hraj so slúchadlami. Po pripojení spusti kalibráciu.</p>
       </details>
@@ -305,7 +307,7 @@ const CALIB = { id: '_calib', name: 'Kalibrácia', venue: 'Nastavenie', bpm: 80,
 
 // ---------- uložený postup ----------
 const KEY = 'bubnova-vyprava-v1';
-let S = { stars: {}, best: {}, streak: 0, last: '', slow: false, guide: true, student: '', log: {}, custom: {}, xp: 0, dayXp: { d: '', xp: 0 }, off: { key: 0, touch: 30, midi: 0, mic: 50 } };
+let S = { stars: {}, best: {}, streak: 0, last: '', slow: false, guide: true, student: '', log: {}, custom: {}, xp: 0, dayXp: { d: '', xp: 0 }, off: { key: 0, touch: 30, midi: 0, mic: 50 }, micSens: 6 };
 try { const raw = localStorage.getItem(KEY); if (raw) { const p = JSON.parse(raw); S = { ...S, ...p, off: { ...S.off, ...(p.off || {}) } }; } } catch (e) {}
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
 
@@ -411,6 +413,7 @@ function hit(lane, kind, tCtx) {
   for (const n of G.notes) { if (n.st || (!any && n.lane !== lane)) continue; const d = Math.abs(n.t - th); if (d <= bd) { bd = d; best = n; } if (n.t - th > win) break; }
   if (!best) { if (!calib && th > G.T - 0.1) { G.combo = 0; fx('mimo', '#aca6d8', lane === 'any' ? 's' : lane); hud(); } return; }
   const d = th - best.t;
+  if (lane === 'any') flashPad(best.lane);
   best.st = 1; best.jt = ctx.currentTime;
   if (calib) { G.raw.push(d); G.kind = kind; fx('zaznamenané', '#9be58f', 's'); return; }
   const a = Math.abs(d);
@@ -600,24 +603,43 @@ $('#opt-midi').addEventListener('click', async () => {
     io(n ? 'Pripojené MIDI zariadenia: ' + n + '. Zvuk hrá tvoj modul bicích.' : 'Prístup k MIDI je povolený, ale žiadne zariadenie nie je pripojené. Zapoj bicie cez USB a klikni znova.');
   } catch (e) { io(window.Capacitor ? 'MIDI v Android aplikácii zatiaľ nefunguje. Hraj ťukaním na pady alebo cez mikrofón.' : 'MIDI tu nie je dostupné. Otvor súbor hry priamo v prehliadači Chrome alebo Edge na počítači.'); }
 });
-let micTimer = null;
+let micTimer = null, micSrc = null;
+const micThr = () => 0.02 + (10 - (S.micSens || 6)) * 0.015;
 $('#opt-mic').addEventListener('click', async () => {
   audio();
-  if (micTimer) { clearInterval(micTimer); micTimer = null; $('#opt-mic').setAttribute('aria-pressed', false); io('Mikrofón je vypnutý.'); return; }
+  if (micTimer) { clearInterval(micTimer); micTimer = null; $('#mic-ui').hidden = true; if (micSrc) { micSrc.mediaStream.getTracks().forEach(t => t.stop()); micSrc = null; } $('#opt-mic').setAttribute('aria-pressed', false); S.mic = false; save(); io('Mikrofón je vypnutý.'); return; }
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
-    const an = ctx.createAnalyser(); an.fftSize = 256; ctx.createMediaStreamSource(stream).connect(an);
-    const buf = new Float32Array(an.fftSize); let avg = 0.01, last = 0;
+    if (ctx.state !== 'running') await ctx.resume().catch(() => {});
+    const an = ctx.createAnalyser(); an.fftSize = 256; micSrc = ctx.createMediaStreamSource(stream); micSrc.connect(an);
+    const buf = new Float32Array(an.fftSize); let avg = 0.01, last = 0, shown = 0, lvl = 0, hits = 0;
+    const meter = $('#mic-meter'), bar = meter.firstElementChild;
+    $('#mic-ui').hidden = false;
     micTimer = setInterval(() => {
+      if (ctx.state !== 'running') { ctx.resume().catch(() => {}); return; }
       an.getFloatTimeDomainData(buf); let pk = 0; for (let i = 0; i < buf.length; i++) { const v = Math.abs(buf[i]); if (v > pk) pk = v; }
-      const now = ctx.currentTime;
-      if (pk > 0.1 && pk > avg * 3 && now - last > 0.09) { last = now; hit('any', 'mic', now - an.fftSize / ctx.sampleRate / 2); }
+      const now = ctx.currentTime, thr = micThr();
+      lvl = Math.max(pk, lvl * 0.9);
+      if (pk > thr && pk > avg * 2.5 && now - last > 0.09) {
+        last = now; hits++; hit('any', 'mic', now - an.fftSize / ctx.sampleRate / 2);
+        meter.classList.add('hit'); setTimeout(() => meter.classList.remove('hit'), 120);
+        if (!G) io('Mikrofón počúva. Zachytené údery: ' + hits + '.');
+      }
       avg = avg * 0.9 + pk * 0.1;
+      if (now - shown > 0.05) { shown = now; bar.style.width = Math.min(100, Math.round(Math.sqrt(lvl / (thr * 2)) * 100)) + '%'; }
     }, 5);
-    $('#opt-mic').setAttribute('aria-pressed', true); io('Mikrofón počúva. Každý úder sa priradí k najbližšej note.');
-  } catch (e) { io(window.Capacitor ? 'Mikrofón nebol povolený. Povoľ ho v Nastaveniach telefónu > Aplikácie > Bubnová výprava > Povolenia.' : 'Mikrofón tu nie je dostupný alebo nebol povolený. Otvor súbor hry priamo v prehliadači na počítači.'); }
+    S.mic = true; save();
+    $('#opt-mic').setAttribute('aria-pressed', true); io('Mikrofón počúva. Udri do bubna alebo tlieskni: pásik hlasitosti by mal poskočiť. Ak nereaguje, zvýš citlivosť.');
+  } catch (e) { S.mic = false; save(); io((window.Capacitor ? 'Mikrofón nebol povolený. Povoľ ho v Nastaveniach telefónu > Aplikácie > Bubnová výprava > Povolenia.' : 'Mikrofón tu nie je dostupný alebo nebol povolený. Otvor súbor hry priamo v prehliadači na počítači.') + (e && e.name ? ' (' + e.name + ')' : '')); }
 });
+// Mikrofón zapnutý minule: zapne sa znova pri prvom ťuknutí.
+if (S.mic) addEventListener('pointerdown', function again() { removeEventListener('pointerdown', again, true); if (!micTimer) $('#opt-mic').click(); }, true);
 
+$('#mic-sens').value = S.micSens || 6;
+$('#mic-sens').addEventListener('input', e => { S.micSens = Number(e.target.value); save(); });
+const wake = () => { if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {}); };
+addEventListener('pointerdown', wake, true);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) wake(); });
 $('#opt-guide').addEventListener('click', () => { S.guide = !S.guide; save(); renderHome(); });
 $('#opt-calib').addEventListener('click', () => start(CALIB));
 $('#g-back').addEventListener('click', () => { stop(); show('home'); });

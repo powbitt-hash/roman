@@ -27,6 +27,8 @@ jobs:
       - run: npx cap add android
       - name: Povolenie mikrofonu
         run: sed -i 's#<uses-permission android:name="android.permission.INTERNET" />#&\n    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />#' android/app/src/main/AndroidManifest.xml
+      - name: Kontrola povolenia mikrofonu
+        run: grep -q 'android.permission.RECORD_AUDIO' android/app/src/main/AndroidManifest.xml
       - run: npx cap sync android
       - name: Zostavenie APK
         working-directory: bubnova-vyprava/android
