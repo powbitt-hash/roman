@@ -338,7 +338,7 @@ const CALIB = { id: '_calib', name: 'Kalibrácia', venue: 'Nastavenie', bpm: 80,
 
 // ---------- uložený postup ----------
 const KEY = 'bubnova-vyprava-v1';
-let S = { stars: {}, best: {}, streak: 0, last: '', slow: false, guide: true, student: '', log: {}, custom: {}, xp: 0, dayXp: { d: '', xp: 0 }, off: { key: 0, touch: 30, midi: 0, mic: 50 }, micSens: 6, outMs: 0, micGap: 90, tol: 100 };
+let S = { stars: {}, best: {}, streak: 0, last: '', slow: false, guide: true, student: '', log: {}, custom: {}, xp: 0, dayXp: { d: '', xp: 0 }, off: { key: 0, touch: 30, midi: 0, mic: 50 }, micSens: 6, outMs: 0, micGap: 110, tol: 100 };
 try { const raw = localStorage.getItem(KEY); if (raw) { const p = JSON.parse(raw); S = { ...S, ...p, off: { ...S.off, ...(p.off || {}) } }; } } catch (e) {}
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
 
@@ -699,7 +699,7 @@ class O extends AudioWorkletProcessor{constructor(){super();this.thr=0.08;this.g
 this.B=[{n:'all',f:null,g:1},{n:'k',f:bq('lp',150,0.7,sampleRate),g:1.2},{n:'s',f:bq('bp',700,0.9,sampleRate),g:0.8},{n:'h',f:bq('hp',5000,0.7,sampleRate),g:0.45}];
 for(const b of this.B){b.env=0;b.slow=0.003;b.last=-1}
 this.A=[60,120,250,500,1000,2000,4000,8000].map(f=>bq('bp',Math.min(f,sampleRate*0.45),1.4,sampleRate));this.av=new Float32Array(8);
-this.df=Math.exp(-1/(0.012*sampleRate));this.ds=Math.exp(-1/(0.25*sampleRate));this.wf=[];this.wt=0;this.pend=null;
+this.df=Math.exp(-1/(0.025*sampleRate));this.hitLvl=0;this.ds=Math.exp(-1/(0.25*sampleRate));this.wf=[];this.wt=0;this.pend=null;
 this.port.onmessage=e=>{this.thr=e.data.thr;if(e.data.gap)this.gap=e.data.gap}}
 process(inp){const ch=inp[0]&&inp[0][0];if(!ch)return true;let mn=0,mx=0;
 for(let i=0;i<ch.length;i++){const x=ch[i];if(x<mn)mn=x;if(x>mx)mx=x;const t=currentTime+i/sampleRate;
@@ -708,12 +708,14 @@ else for(let k=0;k<8;k++){const f=this.A[k],y=f.b0*x+f.b1*f.x1+f.b2*f.x2-f.a1*f.
 for(const b of this.B){let y=x;if(b.f){const f=b.f;y=f.b0*x+f.b1*f.x1+f.b2*f.x2-f.a1*f.y1-f.a2*f.y2;f.x2=f.x1;f.x1=x;f.y2=f.y1;f.y1=y}
 const v=Math.abs(y),prev=b.env;b.env=v>b.env?v:b.env*this.df;b.slow=b.slow*this.ds+b.env*(1-this.ds);
 if(b.env>this.thr*b.g&&b.env>prev&&b.env>b.slow*2.2&&prev<this.thr*b.g*0.9+b.slow*1.2&&t-b.last>this.gap){b.last=t;
-if(this.pend&&t-this.pend.t<0.03){if(this.pend.bands.indexOf(b.n)<0)this.pend.bands.push(b.n)}else{this.flush();this.pend={t:t,bands:[b.n],vec:new Array(8).fill(0)}}}}}
-if(this.pend&&currentTime-this.pend.t>0.045)this.flush();
+if(this.pend&&t-this.pend.t<0.05){if(this.pend.bands.indexOf(b.n)<0)this.pend.bands.push(b.n)}else if(!this.pend&&this.ok(t)){this.pend={t:t,bands:[b.n],vec:new Array(8).fill(0),pk:0}}}}
+if(this.pend&&this.B[0].env>this.pend.pk)this.pend.pk=this.B[0].env}
+if(this.pend&&currentTime-this.pend.t>0.05)this.flush();
 if(!this.wf.length)this.wt=currentTime;this.wf.push(mn,mx);if(this.wf.length>=16){this.port.postMessage({wf:this.wf,t:this.wt,dt:ch.length/sampleRate});this.wf=[]}
 return true}
-flush(){if(!this.pend)return;const p=this.pend;this.pend=null;if(p.t-this.last<this.gap*0.5)return;this.last=p.t;this.port.postMessage({hit:p.t,bands:p.bands,vec:p.vec})}}
-registerProcessor('bubny-onset3',O);`;
+ok(t){const dt=t-this.last;if(dt<this.gap)return false;return this.B[0].env>this.hitLvl*Math.exp(-dt/0.12)*2.2}
+flush(){if(!this.pend)return;const p=this.pend;this.pend=null;this.last=p.t;this.hitLvl=p.pk;this.port.postMessage({hit:p.t,bands:p.bands,vec:p.vec})}}
+registerProcessor('bubny-onset4',O);`;
 $('#opt-mic').addEventListener('click', async () => {
   audio();
   if (micTimer) { clearInterval(micTimer); micTimer = null; if (micNode) { micNode.port.onmessage = null; micNode.disconnect(); micNode = null; } $('#mic-ui').hidden = true; scopeStop(); if (micSrc) { micSrc.mediaStream.getTracks().forEach(t => t.stop()); micSrc = null; } $('#opt-mic').setAttribute('aria-pressed', false); S.mic = false; save(); io('Mikrofón je vypnutý.'); return; }
@@ -738,9 +740,9 @@ $('#opt-mic').addEventListener('click', async () => {
     if (ctx.audioWorklet && window.AudioWorkletNode) {
       try {
         if (!micModule) { micModule = URL.createObjectURL(new Blob([MIC_WORKLET], { type: 'application/javascript' })); await ctx.audioWorklet.addModule(micModule); }
-        node = new AudioWorkletNode(ctx, 'bubny-onset3', { numberOfInputs: 1, numberOfOutputs: 0 });
+        node = new AudioWorkletNode(ctx, 'bubny-onset4', { numberOfInputs: 1, numberOfOutputs: 0 });
         node.port.onmessage = e => { const m = e.data; if (m.hit != null) onHit(m.hit, m.bands, m.vec); else if (m.wf) scopeWave(m.t, m.dt, m.wf, bar); };
-        const cfg = () => node.port.postMessage({ thr: micThr(), gap: (S.micGap || 90) / 1000 });
+        const cfg = () => node.port.postMessage({ thr: micThr(), gap: (S.micGap || 110) / 1000 });
         cfg(); micSrc.connect(node); micNode = node;
         micTimer = setInterval(() => { if (ctx.state !== 'running') ctx.resume().catch(() => {}); cfg(); }, 250);
       } catch (e) { node = null; }
@@ -752,7 +754,7 @@ $('#opt-mic').addEventListener('click', async () => {
         if (ctx.state !== 'running') { ctx.resume().catch(() => {}); return; }
         an.getFloatTimeDomainData(buf); let mn = 0, mx = 0; for (let i = 0; i < buf.length; i++) { if (buf[i] < mn) mn = buf[i]; if (buf[i] > mx) mx = buf[i]; }
         const pk = Math.max(-mn, mx), now = ctx.currentTime; scopeWave(now - buf.length / ctx.sampleRate, buf.length / ctx.sampleRate, [mn, mx], bar);
-        if (pk > micThr() && pk > avg * 2.5 && now - last > (S.micGap || 90) / 1000) { last = now; onHit(now - an.fftSize / ctx.sampleRate / 2, ['all']); }
+        if (pk > micThr() && pk > avg * 2.5 && now - last > (S.micGap || 110) / 1000) { last = now; onHit(now - an.fftSize / ctx.sampleRate / 2, ['all']); }
         avg = avg * 0.9 + pk * 0.1;
       }, 5);
     }
@@ -783,12 +785,14 @@ function classify(vec) {
     const idx = [0, 1, 2].filter(i => mask & (1 << i)), A = idx.map(i => F[i]);
     const G = idx.map((_, a) => idx.map((_, b) => A[a].reduce((s, x, k) => s + x * A[b][k], 0))), rhs = A.map(f => f.reduce((s, x, k) => s + x * vec[k], 0));
     const w = solve(G, rhs); if (!w || w.some(x => x < 0)) continue;
-    const res = vec.map((x, k) => x - idx.reduce((s, i, j) => s + w[j] * F[i][k], 0)), err = vnorm(res) / vn + 0.12 * (idx.length - 1);
+    const res = vec.map((x, k) => x - idx.reduce((s, i, j) => s + w[j] * F[i][k], 0)), err = vnorm(res) / vn + 0.2 * (idx.length - 1);
     if (!best || err < best.err) best = { err, idx, w };
   }
   if (!best) return [];
   const sens = (S.drumGate || 30) / 100;
-  return best.idx.filter((i, j) => best.w[j] >= sens * S.drumLvl[DRUMS[i]]).map(i => DRUMS[i]);
+  // hlavná zložka musí prekročiť prah, každá ďalšia (súčasný úder iného bubna) musí byť výrazná, inak ide o presluch
+  const rel = best.idx.map((i, j) => best.w[j] / S.drumLvl[DRUMS[i]]), top = Math.max(...rel);
+  return best.idx.filter((i, j) => rel[j] >= sens && (rel[j] === top || rel[j] >= Math.max(0.6, top * 0.5))).map(i => DRUMS[i]);
 }
 let DC = null; // stav sprievodcu kalibráciou bubnov
 const DC_N = 6;
@@ -886,7 +890,7 @@ const TUNE = [
   { k: 'off.touch', name: 'Oneskorenie dotyku', min: -100, max: 300, step: 5, unit: ' ms', def: 30, help: 'Pre ťukanie na pady na obrazovke.' },
   { k: 'outMs', name: 'Oneskorenie zvuku z reproduktora', min: 0, max: 400, step: 5, unit: ' ms', def: 0, help: 'Posunie noty tak, aby prišli na čiaru vtedy, keď počuješ klik. Pri Bluetooth slúchadlách daj 150 až 250 ms.' },
   { k: 'micSens', name: 'Citlivosť mikrofónu', min: 1, max: 10, step: 1, unit: '', def: 6, help: 'Vyššia citlivosť zachytí aj tichší úder, ale aj hluk.' },
-  { k: 'micGap', name: 'Najkratší odstup úderov (mikrofón)', min: 40, max: 200, step: 5, unit: ' ms', def: 90, help: 'Menej, ak hráš rýchle šestnástiny. Viac, ak jeden úder hra počíta dvakrát.' },
+  { k: 'micGap', name: 'Najkratší odstup úderov (mikrofón)', min: 40, max: 250, step: 5, unit: ' ms', def: 110, help: 'Menej, ak hráš rýchle šestnástiny. Viac, ak jeden úder hra počíta dvakrát.' },
   { k: 'drumOn', name: 'Rozlišovať bubny podľa zvuku', check: true, def: 0, help: 'Zapne sa po kalibrácii bubnov. Vypnuté = každý úder sa priradí k najbližšej note bez ohľadu na bubon.' },
   { k: 'drumGate', name: 'Prah rozpoznania bubna', min: 10, max: 80, step: 5, unit: ' %', def: 30, help: 'Úder slabší než toto percento sily z kalibrácie sa ignoruje. Zvýš, ak appka hlási údery na bubnoch, do ktorých si neudrel.' },
   { k: 'tol', name: 'Tolerancia hodnotenia', min: 60, max: 160, step: 5, unit: ' %', def: 100, help: 'Viac je zhovievavejšie k nepresnosti, menej je prísnejšie.' },
