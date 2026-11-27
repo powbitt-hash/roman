@@ -23,8 +23,12 @@ jobs:
           distribution: temurin
           java-version: 21
       - run: npm ci
+      - name: Cislo verzie
+        run: echo "BUILD_VERSION=${{ github.run_number }} ($(TZ=Europe/Bratislava date +'%-d. %-m. %H:%M'))" >> "$GITHUB_ENV"
       - run: npm run build
       - run: npx cap add android
+      - name: Verzia v Androide
+        run: sed -i 's/versionCode 1$/versionCode ${{ github.run_number }}/; s/versionName "1.0"/versionName "0.${{ github.run_number }}"/' android/app/build.gradle && grep -q 'versionCode ${{ github.run_number }}' android/app/build.gradle
       - name: Povolenie mikrofonu
         run: sed -i 's#<uses-permission android:name="android.permission.INTERNET" />#&\n    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />#' android/app/src/main/AndroidManifest.xml
       - name: Kontrola povolenia mikrofonu
@@ -33,7 +37,9 @@ jobs:
       - name: Zostavenie APK
         working-directory: bubnova-vyprava/android
         run: ./gradlew assembleDebug --no-daemon
+      - name: Pomenovanie APK podla verzie
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk bubnova-vyprava-v${{ github.run_number }}.apk
       - uses: actions/upload-artifact@v4
         with:
           name: bubnova-vyprava-apk-${{ github.run_number }}
-          path: bubnova-vyprava/android/app/build/outputs/apk/debug/app-debug.apk
+          path: bubnova-vyprava/bubnova-vyprava-v${{ github.run_number }}.apk

@@ -132,6 +132,7 @@ tr:last-child td{border-bottom:0}
   <header class="top">
     <div>
       <p class="label" id="rank">Nováčik</p>
+      <p class="label" id="ver" style="opacity:.6;margin-top:2px">verzia __VERZIA__</p>
       <h1>Bubnová <span>výprava</span></h1>
     </div>
     <div class="stats">
@@ -1044,6 +1045,7 @@ const capApp = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.
 if (capApp) capApp.addListener('backButton', () => { if ($('#home').hidden) { stop(); show('home'); renderHome(); } else capApp.exitApp(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden && G && !$('#game').hidden) { stop(); show('home'); renderHome(); } });
 
+if ($('#ver').textContent.includes('__')) $('#ver').hidden = true; // verziu dopĺňa len zostavenie aplikácie
 renderHome();
 window.__bubny = { get G() { return G; }, hit, start, ALL, get ctx() { return ctx; } };
 })();

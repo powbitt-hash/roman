@@ -1,7 +1,8 @@
 // Zabalí index.html (fragment pre Claude artifact) do samostatnej aplikácie v priečinku www/.
 // Samostatná verzia nepotrebuje sieť: písma sú pribalené, zdieľané funkcie Claude sa samy skryjú.
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync } from 'node:fs';
-const page = readFileSync('index.html', 'utf8').replace(/<link [^>]*id="webfonts"[^>]*>\n?/, '');
+const page = readFileSync('index.html', 'utf8').replace(/<link [^>]*id="webfonts"[^>]*>\n?/, '')
+  .replace('__VERZIA__', process.env.BUILD_VERSION || 'vývojová');
 const fonts = readFileSync('fonts/fonts.css', 'utf8');
 mkdirSync('www/fonts', { recursive: true });
 writeFileSync('www/index.html', `<!doctype html>
