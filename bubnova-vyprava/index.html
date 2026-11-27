@@ -397,7 +397,7 @@ function run() {
     });
   }
   events.sort((a, b) => a.t - b.t);
-  G = { level, notes, events, ei: 0, t0, T, beat, sps, end: T + total * 4 * beat, total, score: 0, combo: 0, maxCombo: 0, pts: 0, miss: 0, dts: [], raw: [], fx: [], slow: stage === 'slow', auto: stage === 'listen' };
+  G = { level, notes, events, ei: 0, t0, T, beat, sps, end: T + total * 4 * beat, total, score: 0, combo: 0, maxCombo: 0, pts: 0, miss: 0, dts: [], raw: [], fx: [], hits: [], parts: [], waves: [], pop: null, slow: stage === 'slow', auto: stage === 'listen' };
   G.timer = setInterval(tick, 25);
   $('#g-venue').textContent = (LES.stages.length > 1 ? 'Krok ' + (LES.i + 1) + ' z ' + LES.stages.length + ': ' + STAGE[stage] : level.venue) + ' · ' + Math.round(level.bpm * rate) + ' úderov za minútu';
   $('#g-name').textContent = level.name;
@@ -425,19 +425,26 @@ function hit(lane, kind, tCtx) {
   const win = calib ? 0.3 : WIN;
   let best = null, bd = win;
   for (const n of G.notes) { if (n.st || (!any && n.lane !== lane)) continue; const d = Math.abs(n.t - th); if (d <= bd) { bd = d; best = n; } if (n.t - th > win) break; }
-  if (!best) { if (!calib && th > G.T - 0.1) { G.combo = 0; fx('mimo', '#aca6d8', lane === 'any' ? 's' : lane); hud(); } return; }
+  if (!best) { if (!calib && th > G.T - 0.1) { const ml = lane === 'any' ? (micLane || 's') : lane; G.combo = 0; fx('mimo', '#aca6d8', ml); G.hits.push({ t: th, lane: ml, g: 'miss', at: ctx.currentTime }); hud(); } return; }
   const d = th - best.t;
   if (lane === 'any') flashPad(best.lane);
   best.st = 1; best.jt = ctx.currentTime;
   if (calib) { G.raw.push(d); G.kind = kind; fx('zaznamenané', '#9be58f', 's'); return; }
   const a = Math.abs(d);
   const pts = a <= PERFECT ? 100 : a <= GOOD ? 70 : 40;
+  const grade = a <= PERFECT ? 'perfect' : a <= GOOD ? 'good' : 'bad';
+  G.hits.push({ t: th, nt: best.t, lane: best.lane, g: grade, d, at: ctx.currentTime });
+  burst(best.lane, GRADE_COL[grade], grade === 'perfect' ? 18 : grade === 'good' ? 12 : 7);
   G.combo++; G.maxCombo = Math.max(G.maxCombo, G.combo);
+  if (G.combo % 10 === 0) G.pop = { txt: 'SÉRIA ' + G.combo + '!', t: ctx.currentTime };
   G.pts += pts; G.dts.push(d);
   G.score += Math.round(pts * Math.min(3, 1 + Math.floor(G.combo / 10) * 0.5));
   fx(a <= PERFECT ? 'presne!' : d < 0 ? 'priskoro' : 'neskoro', a <= PERFECT ? '#9be58f' : a <= GOOD ? '#f2b63c' : '#ff6b5e', best.lane);
   hud();
 }
+const GRADE_COL = { perfect: '#9be58f', good: '#f2b63c', bad: '#ff6b5e', miss: '#aca6d8' };
+let micLane = null;
+function burst(lane, col, n) { if (!G) return; const t = ctx.currentTime; G.waves.push({ lane, col, t }); for (let i = 0; i < n; i++) { const a = Math.random() * Math.PI * 2, v = 60 + Math.random() * 160; G.parts.push({ lane, col, t, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 40, r: 1.5 + Math.random() * 2.5 }); } }
 function fx(txt, color, lane) { if (G) G.fx.push({ txt, color, lane, t: ctx.currentTime }); }
 function flashPad(lane) { const p = document.querySelector('.pad[data-lane="' + lane + '"]'); if (!p) return; p.classList.add('on'); setTimeout(() => p.classList.remove('on'), 90); }
 
@@ -457,11 +464,16 @@ function draw(vis, now) {
   const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
   if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
   g2.setTransform(dpr, 0, 0, dpr, 0, 0); g2.clearRect(0, 0, W, H);
-  const hitX = W < 520 ? 70 : 120, ppb = (W - hitX) / (W < 520 ? 3 : 5), pps = ppb / G.beat;
-  const top = 34, laneH = (H - top - 12) / 3, ly = i => top + laneH * (i + 0.5), X = t => hitX + (t - vis) * pps;
+  // čiara úderu ďalej od ľavého okraja, aby bolo vidno aj tvoje údery, ktoré už prešli
+  const hitX = W < 520 ? Math.round(W * 0.32) : 200, ppb = (W - hitX) / (W < 520 ? 2.5 : 4.5), pps = ppb / G.beat;
+  const y0 = 34, laneH = (H - y0 - 12) / 3, ly = i => y0 + laneH * (i + 0.5), X = t => hitX + (t - vis) * pps, LY = ln => ly(LANES.indexOf(ln));
+  const beatPh = vis >= G.T ? ((vis - G.T) / G.beat) % 1 : 1, pulse = Math.max(0, 1 - beatPh * 4);
   g2.textBaseline = 'middle';
-  // dráhy
+  // pozadie: jemný prechod a záblesk dráhy pri údere
+  const bg = g2.createLinearGradient(0, 0, W, 0); bg.addColorStop(0, 'rgba(242,182,60,0.07)'); bg.addColorStop(0.25, 'rgba(0,0,0,0)'); g2.fillStyle = bg; g2.fillRect(0, 0, W, H);
   LANES.forEach((ln, i) => {
+    const last = G.hits.filter(h => h.lane === ln && h.g !== 'miss').at(-1), fl = last ? Math.max(0, 1 - (now - last.at) / 0.3) : 0;
+    if (fl > 0) { const gr = g2.createLinearGradient(hitX, 0, W, 0); gr.addColorStop(0, hexA(COL[ln], 0.28 * fl)); gr.addColorStop(1, hexA(COL[ln], 0)); g2.fillStyle = gr; g2.fillRect(0, ly(i) - laneH / 2, W, laneH); }
     g2.strokeStyle = '#3f3785'; g2.lineWidth = 2; g2.beginPath(); g2.moveTo(0, ly(i)); g2.lineTo(W, ly(i)); g2.stroke();
     g2.fillStyle = COL[ln]; g2.font = '800 13px "Baloo 2",sans-serif'; g2.textAlign = 'left';
     g2.fillText(ln === 'h' ? 'HI-HAT' : ln === 's' ? 'RYTMIČÁK' : 'KOPÁK', 8, ly(i) - laneH * 0.34);
@@ -472,30 +484,55 @@ function draw(vis, now) {
     const x = X(G.T + e * G.beat / 2); if (x > W + 20) break; if (G.T + e * G.beat / 2 > G.end - 0.001) break;
     const on = e % 2 === 0, q = (e / 2) % 4;
     g2.strokeStyle = on ? (q === 0 ? '#aca6d8' : '#4d459a') : '#2c2668'; g2.lineWidth = q === 0 && on ? 2 : 1;
-    g2.beginPath(); g2.moveTo(x, top - 6); g2.lineTo(x, H - 8); g2.stroke();
+    g2.beginPath(); g2.moveTo(x, y0 - 6); g2.lineTo(x, H - 8); g2.stroke();
     g2.fillStyle = on ? '#f4f0ff' : '#aca6d8'; g2.textAlign = 'center'; g2.font = (on ? '800 15px' : '700 12px') + ' "Baloo 2",sans-serif';
     g2.fillText(on ? String(q + 1) : 'a', x, 15);
   }
-  // čiara úderu
-  g2.strokeStyle = '#f4f0ff'; g2.lineWidth = 4; g2.beginPath(); g2.moveTo(hitX, top - 8); g2.lineTo(hitX, H - 6); g2.stroke();
-  // noty
+  // čiara úderu so žiarou, ktorá pulzuje do rytmu
+  g2.save(); g2.shadowColor = '#f2b63c'; g2.shadowBlur = 10 + pulse * 18; g2.strokeStyle = '#f4f0ff'; g2.lineWidth = 4 + pulse * 2;
+  g2.beginPath(); g2.moveTo(hitX, y0 - 8); g2.lineTo(hitX, H - 6); g2.stroke(); g2.restore();
+  // noty: po údere ostane obrys tam, kde nota mala byť
   const r = Math.min(15, laneH * 0.26);
+  const shape = (ln, x, y, k, fill) => {
+    if (ln === 'h') { g2.lineWidth = 4; g2.lineCap = 'round'; g2.beginPath(); g2.moveTo(x - r * k * .8, y - r * k * .8); g2.lineTo(x + r * k * .8, y + r * k * .8); g2.moveTo(x + r * k * .8, y - r * k * .8); g2.lineTo(x - r * k * .8, y + r * k * .8); g2.stroke(); }
+    else { g2.beginPath(); g2.arc(x, y, r * k * (ln === 'k' ? 1.15 : 1), 0, 7); fill ? g2.fill() : g2.stroke(); }
+  };
   for (const n of G.notes) {
     const x = X(n.t); if (x > W + 30) break; if (x < -30) continue;
-    const y = ly(LANES.indexOf(n.lane)); let a = 1, k = 1;
-    if (n.st) { const age = (now - n.jt) / 0.25; if (age > 1) continue; a = 1 - age; k = n.st === 1 ? 1 + age : 1; }
-    g2.globalAlpha = n.st === 2 ? a * 0.35 : a; g2.strokeStyle = g2.fillStyle = COL[n.lane];
-    if (n.lane === 'h') { g2.lineWidth = 4; g2.lineCap = 'round'; g2.beginPath(); g2.moveTo(x - r * k * .8, y - r * k * .8); g2.lineTo(x + r * k * .8, y + r * k * .8); g2.moveTo(x + r * k * .8, y - r * k * .8); g2.lineTo(x - r * k * .8, y + r * k * .8); g2.stroke(); }
-    else { g2.beginPath(); g2.arc(x, y, r * k * (n.lane === 'k' ? 1.15 : 1), 0, 7); g2.fill(); }
-    g2.globalAlpha = 1;
+    const y = LY(n.lane); g2.strokeStyle = g2.fillStyle = COL[n.lane];
+    if (!n.st) { g2.save(); g2.shadowColor = COL[n.lane]; g2.shadowBlur = 14; shape(n.lane, x, y, 1, true); g2.restore(); continue; }
+    g2.globalAlpha = n.st === 2 ? 0.3 : 0.45; g2.lineWidth = 2; g2.setLineDash(n.st === 2 ? [4, 4] : []); shape(n.lane, x, y, 1, false); g2.setLineDash([]); g2.globalAlpha = 1;
   }
-  // hodnotenie úderu
-  G.fx = G.fx.filter(f => now - f.t < 0.6);
-  for (const f of G.fx) { const p = (now - f.t) / 0.6; g2.globalAlpha = 1 - p; g2.fillStyle = f.color; g2.textAlign = 'left'; g2.font = '800 17px "Baloo 2",sans-serif';
-    g2.fillText(f.txt, hitX + 12, ly(LANES.indexOf(f.lane)) - laneH * 0.3 - p * 10); g2.globalAlpha = 1; }
+  // tvoje údery: krúžok tam, kde si naozaj udrel, spojený s notou
+  G.hits = G.hits.filter(h => X(h.t) > -40);
+  for (const h of G.hits) {
+    const x = X(h.t), y = LY(h.lane), col = GRADE_COL[h.g], age = Math.min(1, (now - h.at) / 0.18);
+    if (h.nt != null) { const xn = X(h.nt); g2.strokeStyle = col; g2.globalAlpha = 0.8; g2.lineWidth = 3; g2.beginPath(); g2.moveTo(xn, y); g2.lineTo(x, y); g2.stroke(); g2.globalAlpha = 1;
+      if (Math.abs(h.d) * 1000 >= 15) { g2.fillStyle = col; g2.font = '800 11px "Baloo 2",sans-serif'; g2.textAlign = 'center'; g2.fillText((h.d > 0 ? '+' : '−') + Math.round(Math.abs(h.d) * 1000) + ' ms', (x + xn) / 2, y + r + 12); } }
+    g2.save(); g2.shadowColor = col; g2.shadowBlur = 12; g2.strokeStyle = col; g2.lineWidth = 3;
+    g2.beginPath(); g2.arc(x, y, (r * 0.75) * (1.6 - 0.6 * age), 0, 7); g2.stroke();
+    g2.fillStyle = h.g === 'miss' ? 'rgba(172,166,216,.25)' : hexA(col, 0.35); g2.fill(); g2.restore();
+  }
+  // vlny a iskry
+  G.waves = G.waves.filter(w => now - w.t < 0.45);
+  for (const w of G.waves) { const p = (now - w.t) / 0.45; g2.globalAlpha = 1 - p; g2.strokeStyle = w.col; g2.lineWidth = 3 * (1 - p) + 1; g2.beginPath(); g2.arc(hitX, LY(w.lane), r + p * laneH * 0.42, 0, 7); g2.stroke(); }
+  g2.globalAlpha = 1;
+  G.parts = G.parts.filter(q => now - q.t < 0.6);
+  for (const q of G.parts) { const t = now - q.t, p = t / 0.6; g2.globalAlpha = 1 - p; g2.fillStyle = q.col; g2.beginPath(); g2.arc(hitX + q.vx * t, LY(q.lane) + q.vy * t + 220 * t * t, q.r * (1 - p * 0.5), 0, 7); g2.fill(); }
+  g2.globalAlpha = 1;
+  // hodnotenie úderu s „vyskočením“
+  G.fx = G.fx.filter(f => now - f.t < 0.7);
+  for (const f of G.fx) { const p = (now - f.t) / 0.7, sc = p < 0.15 ? 0.6 + p / 0.15 * 0.6 : 1.2 - Math.min(0.2, (p - 0.15) * 0.6);
+    g2.save(); g2.globalAlpha = 1 - p * p; g2.translate(hitX + 14, LY(f.lane) - laneH * 0.3 - p * 14); g2.scale(sc, sc);
+    g2.shadowColor = f.color; g2.shadowBlur = 10; g2.fillStyle = f.color; g2.textAlign = 'left'; g2.font = '800 18px "Baloo 2",sans-serif'; g2.fillText(f.txt, 0, 0); g2.restore(); }
+  // séria
+  if (G.pop) { const p = (now - G.pop.t) / 1.1; if (p > 1) G.pop = null; else { g2.save(); g2.globalAlpha = Math.min(1, (1 - p) * 2); g2.translate(W / 2 + hitX / 2, H / 2); g2.scale(1 + (1 - Math.min(1, p * 4)) * 0.5, 1 + (1 - Math.min(1, p * 4)) * 0.5);
+    g2.shadowColor = '#f2b63c'; g2.shadowBlur = 24; g2.fillStyle = '#f2b63c'; g2.textAlign = 'center'; g2.font = '800 ' + Math.round(Math.min(46, H * 0.16)) + 'px "Baloo 2",sans-serif'; g2.fillText(G.pop.txt, 0, 0); g2.restore(); } }
   // odpočítanie
-  if (vis < G.T) { const c = Math.floor((vis - G.t0) / G.beat) + 1; if (c >= 1 && c <= 4) { g2.fillStyle = '#f2b63c'; g2.textAlign = 'center'; g2.font = '800 ' + Math.round(H * 0.42) + 'px "Baloo 2",sans-serif'; g2.fillText(String(c), W / 2 + hitX / 2, H / 2 + 8); } }
+  if (vis < G.T) { const c = Math.floor((vis - G.t0) / G.beat) + 1; if (c >= 1 && c <= 4) { const ph = ((vis - G.t0) / G.beat) % 1; g2.save(); g2.globalAlpha = 1 - ph * 0.6; g2.translate(W / 2 + hitX / 2, H / 2 + 8); g2.scale(1.25 - ph * 0.25, 1.25 - ph * 0.25);
+    g2.shadowColor = '#f2b63c'; g2.shadowBlur = 30; g2.fillStyle = '#f2b63c'; g2.textAlign = 'center'; g2.font = '800 ' + Math.round(H * 0.42) + 'px "Baloo 2",sans-serif'; g2.fillText(String(c), 0, 0); g2.restore(); } }
 }
+const hexA = (hex, a) => { const n = parseInt(hex.slice(1), 16); return 'rgba(' + (n >> 16) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')'; };
 
 function finish() {
   const g = G; stop();
@@ -640,7 +677,7 @@ $('#opt-mic').addEventListener('click', async () => {
     let last = 0, shown = 0, lvl = 0, hits = 0;
     const meter = $('#mic-meter'), bar = meter.firstElementChild;
     const onHit = t => {
-      if (t - last < (S.micGap || 90) / 1000) return; last = t; hits++; scopeHit(); hit('any', 'mic', t);
+      if (t - last < (S.micGap || 90) / 1000) return; last = t; hits++; micLane = scopeHit(); hit('any', 'mic', t);
       meter.classList.add('hit'); setTimeout(() => meter.classList.remove('hit'), 120);
       if (!G) io('Mikrofón počúva. Zachytené údery: ' + hits + '.');
     };
