@@ -1,7 +1,11 @@
 name: Bubnova vyprava - Android APK
 
-# Spúšťa sa len ručne: GitHub > Actions > tento workflow > Run workflow.
-on: workflow_dispatch
+# Spúšťa sa ručne (GitHub > Actions > tento workflow > Run workflow) alebo pri každom pushi do vetvy prototypu.
+on:
+  workflow_dispatch:
+  push:
+    branches: [prototyp-android]
+    paths: ['bubnova-vyprava/**', '.github/workflows/bubnova-vyprava-android.yml']
 
 jobs:
   apk:
@@ -29,5 +33,5 @@ jobs:
         run: ./gradlew assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: bubnova-vyprava-apk
+          name: bubnova-vyprava-apk-${{ github.run_number }}
           path: bubnova-vyprava/android/app/build/outputs/apk/debug/app-debug.apk

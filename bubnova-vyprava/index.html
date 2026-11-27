@@ -2,7 +2,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="claude:viewport-fit-sides" content="cover">
 <title>Bubnová výprava</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;800&family=Nunito:wght@400;700;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;800&family=Nunito:wght@400;700;800&display=swap" id="webfonts">
 <style>
 /* Layout: turné ako cesta zhora nadol – zastávky (kluby) a pri každej tri lístky (levely); hra je jedna obrazovka: noty tečú sprava k čiare úderu, pod nimi tri pady. */
 :root{
@@ -121,6 +121,8 @@ tr:last-child td{border-bottom:0}
 .link:hover{color:var(--ink)}
 .focus li{margin:4px 0}
 .focus{margin:0;padding-left:20px;max-width:65ch}
+@media (pointer:coarse){.pad small{display:none}}
+.playing .top,.playing .goal{display:none}
 </style>
 
 <div class="wrap">
@@ -195,13 +197,13 @@ tr:last-child td{border-bottom:0}
         <label class="field"><span class="label">Opakovania</span><input id="e-loops" type="number" min="1" max="8" style="width:110px"></label>
       </div>
       <div class="panel">
-        <h3>Načítať z fotky</h3>
+        <h3 id="e-photo-h">Načítať z fotky</h3>
         <div id="e-photo-wrap" hidden>
           <label class="btn" for="e-photo" style="display:inline-block;cursor:pointer">Odfotiť alebo vybrať fotku nôt</label>
           <input id="e-photo" type="file" accept="image/jpeg,image/png,image/webp" style="position:absolute;opacity:0;width:1px;height:1px">
         </div>
-        <p class="muted" id="e-photo-none">Čítanie z fotky tu nie je dostupné. Noty zadaj ťuknutím do mriežky.</p>
-        <p class="muted" style="max-width:65ch">Odfoť jedno cvičenie, najviac štyri takty v štvorštvrťovom takte. Hra rozlišuje hi-hat, rytmičák a kopák. Prečítané noty vždy skontroluj podľa učebnice.</p>
+        <p class="muted" id="e-photo-none">Noty zadaj ťuknutím do mriežky: každý štvorček je jedna šestnástina.</p>
+        <p class="muted" id="e-photo-help" style="max-width:65ch">Odfoť jedno cvičenie, najviac štyri takty v štvorštvrťovom takte. Hra rozlišuje hi-hat, rytmičák a kopák. Prečítané noty vždy skontroluj podľa učebnice.</p>
         <p id="e-msg" role="status"></p>
       </div>
       <div id="e-grid" class="wrap"></div>
@@ -509,7 +511,7 @@ function finish() {
 
 // ---------- obrazovky ----------
 let current = null;
-function show(id) { ['home', 'game', 'result', 'report', 'editor', 'between'].forEach(s => $('#' + s).hidden = s !== id); window.scrollTo(0, 0); }
+function show(id) { document.body.classList.toggle('playing', id === 'game'); ['home', 'game', 'result', 'report', 'editor', 'between'].forEach(s => $('#' + s).hidden = s !== id); window.scrollTo(0, 0); }
 const starHtml = n => '<i>' + '★'.repeat(n) + '</i>' + '★'.repeat(3 - n);
 function result(lv, r) {
   current = lv;
@@ -596,7 +598,7 @@ $('#opt-midi').addEventListener('click', async () => {
     const n = bind(); acc.onstatechange = bind;
     $('#opt-midi').setAttribute('aria-pressed', n > 0);
     io(n ? 'Pripojené MIDI zariadenia: ' + n + '. Zvuk hrá tvoj modul bicích.' : 'Prístup k MIDI je povolený, ale žiadne zariadenie nie je pripojené. Zapoj bicie cez USB a klikni znova.');
-  } catch (e) { io('MIDI tu nie je dostupné. Otvor súbor hry priamo v prehliadači Chrome alebo Edge na počítači.'); }
+  } catch (e) { io(window.Capacitor ? 'MIDI v Android aplikácii zatiaľ nefunguje. Hraj ťukaním na pady alebo cez mikrofón.' : 'MIDI tu nie je dostupné. Otvor súbor hry priamo v prehliadači Chrome alebo Edge na počítači.'); }
 });
 let micTimer = null;
 $('#opt-mic').addEventListener('click', async () => {
@@ -613,7 +615,7 @@ $('#opt-mic').addEventListener('click', async () => {
       avg = avg * 0.9 + pk * 0.1;
     }, 5);
     $('#opt-mic').setAttribute('aria-pressed', true); io('Mikrofón počúva. Každý úder sa priradí k najbližšej note.');
-  } catch (e) { io('Mikrofón tu nie je dostupný alebo nebol povolený. Otvor súbor hry priamo v prehliadači na počítači.'); }
+  } catch (e) { io(window.Capacitor ? 'Mikrofón nebol povolený. Povoľ ho v Nastaveniach telefónu > Aplikácie > Bubnová výprava > Povolenia.' : 'Mikrofón tu nie je dostupný alebo nebol povolený. Otvor súbor hry priamo v prehliadači na počítači.'); }
 });
 
 $('#opt-guide').addEventListener('click', () => { S.guide = !S.guide; save(); renderHome(); });
@@ -719,7 +721,7 @@ $('#e-del').addEventListener('click', async () => {
 (async () => {
   let ok = false;
   try { sampleFn = (window.claude && window.claude.use) ? await window.claude.use('sample') : null; const lim = sampleFn ? await sampleFn.limits().catch(() => null) : null; ok = !!(lim && lim.images); } catch (e) { sampleFn = null; }
-  $('#e-photo-wrap').hidden = !ok; $('#e-photo-none').hidden = ok;
+  $('#e-photo-wrap').hidden = !ok; $('#e-photo-none').hidden = ok; $('#e-photo-h').hidden = !ok; $('#e-photo-help').hidden = !ok;
 })();
 
 // ---------- záznam cvičenia a report ----------
@@ -765,8 +767,8 @@ function renderReport() {
     : repState === 'loading' ? 'Načítavam zdieľané záznamy…'
     : repState === 'slow' ? 'Zdieľané záznamy sa zatiaľ nepodarilo načítať. Zobrazené údaje môžu byť neúplné.'
     : repState === 'full' ? 'Úložisko záznamov je plné, nové cvičenia sa už nezdieľajú.'
-    : 'Záznamy sú uložené len v tomto zariadení. Zdieľaný report funguje na zverejnenej stránke.';
-  $('#p-mode').textContent = canWrite === false ? 'Pohľad učiteľa (len na čítanie)' : 'Pre učiteľa a rodiča';
+    : 'Záznamy sú uložené v tomto zariadení.';
+  $('#p-mode').textContent = !db ? 'Môj postup' : canWrite === false ? 'Pohľad učiteľa (len na čítanie)' : 'Pre učiteľa a rodiča';
   const docs = allDocs(), names = [...new Set(docs.map(d => String(d.student || 'Žiak')))].sort();
   if (!names.includes(repStudent)) repStudent = names.includes((S.student || '').trim()) ? S.student.trim() : names[0] || null;
   const ps = $('#p-students'); ps.textContent = '';
@@ -829,6 +831,11 @@ $('#student').addEventListener('change', e => { S.student = e.target.value.trim(
 $('#opt-report').addEventListener('click', () => { show('report'); renderReport(); });
 $('#p-back').addEventListener('click', () => show('home'));
 document.querySelectorAll('[data-days]').forEach(b => b.addEventListener('click', () => { repDays = Number(b.dataset.days); renderReport(); }));
+
+// ---------- Android: tlačidlo Späť a odchod z aplikácie ----------
+const capApp = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+if (capApp) capApp.addListener('backButton', () => { if ($('#home').hidden) { stop(); show('home'); renderHome(); } else capApp.exitApp(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && G && !$('#game').hidden) { stop(); show('home'); renderHome(); } });
 
 renderHome();
 window.__bubny = { get G() { return G; }, hit, start, ALL, get ctx() { return ctx; } };
