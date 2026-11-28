@@ -53,6 +53,8 @@ jobs:
           EOF
           grep -q registerPlugin "$D/MainActivity.java"
       - run: npx cap sync android
+      - name: Stale podpisovanie (aktualizacia bez odinstalovania)
+        run: mkdir -p ~/.android && cp native/debug.keystore ~/.android/debug.keystore
       - name: Zostavenie APK
         working-directory: bubnova-vyprava/android
         run: ./gradlew assembleDebug --no-daemon

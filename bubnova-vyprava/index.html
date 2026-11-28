@@ -165,7 +165,7 @@ tr:last-child td{border-bottom:0}
           <button class="chip" id="opt-rawmic" aria-pressed="true" hidden>Surový mikrofón (Android)</button>
           <button class="chip" id="opt-rec" aria-pressed="false">Nahrávať hru na meranie</button>
         </div>
-        <div class="bar" id="mic-ui" hidden style="align-items:center"><span class="label">Hlasitosť</span><div class="prog" id="mic-meter"><div></div></div><label class="label" style="display:flex;align-items:center;gap:8px">Citlivosť <input id="mic-sens" type="range" min="1" max="10" step="1"></label><button class="chip" id="drum-calib">Kalibrovať bubny</button><button class="chip" id="drum-test">Vyskúšať rozpoznanie</button><button class="chip" id="mic-calib">Kalibrovať oneskorenie</button><span class="label" id="mic-src"></span></div>
+        <div class="bar" id="mic-ui" hidden style="align-items:center"><span class="label">Hlasitosť</span><div class="prog" id="mic-meter"><div></div></div><label class="label" style="display:flex;align-items:center;gap:8px">Citlivosť <input id="mic-sens" type="range" min="1" max="10" step="1"></label><button class="chip" id="drum-calib">Kalibrovať bubny</button><button class="chip" id="drum-test">Vyskúšať rozpoznanie</button><button class="chip" id="mic-calib">Kalibrovať oneskorenie</button><button class="chip" id="cal-save">Uložiť kalibráciu do súboru</button><button class="chip" id="cal-load">Načítať kalibráciu zo súboru</button><input type="file" id="cal-file" accept=".json,application/json" hidden><span class="label" id="mic-src"></span></div>
         <p class="muted" id="io-status">Bez pripojenia sa hrá klávesmi J, F a medzerníkom alebo ťukaním na pady.</p>
         <p class="muted">Po kalibrácii bubnov mikrofón rozozná kopák, rytmičák a hi-hat. Počuje aj reproduktor, preto hraj so slúchadlami. „Nahrávať hru na meranie“ uloží zvuk každej zahranej úrovne do tabletu spolu s notami, aby sa dalo zmerať, ako presne appka bubny rozpoznáva.</p>
       </details>
@@ -896,6 +896,32 @@ async function recSave(R) {
   rc.setAttribute('aria-pressed', !!S.recOn);
   rc.addEventListener('click', () => { S.recOn = !S.recOn; save(); rc.setAttribute('aria-pressed', S.recOn);
     io(S.recOn ? 'Každá zahraná úroveň sa nahrá (zvuk z mikrofónu a noty) a uloží do tabletu do Stiahnuté súbory/BubnovaVyprava. Nikam sa neposiela.' : 'Nahrávanie hry je vypnuté.'); }); }
+// ---------- záloha kalibrácie ----------
+// Kalibrácia je uložená v appke. Pri preinštalovaní by sa stratila, preto sa dá uložiť do súboru a znova načítať.
+const CAL_KEYS = ['drumV', 'drumOn', 'nmf', 'gates', 'nmfLab', 'xtalk', 'micSens', 'micGap', 'drumGate', 'off', 'calibMic', 'micSrcCal', 'camReg', 'camCols', 'rawMic'];
+async function calSave() {
+  const data = { app: 'bubnova-vyprava', kind: 'kalibracia', ver: document.getElementById('ver').textContent, at: new Date().toISOString() };
+  CAL_KEYS.forEach(k => { if (S[k] !== undefined) data[k] = S[k]; });
+  const bytes = new TextEncoder().encode(JSON.stringify(data)), d = new Date(), pad = x => String(x).padStart(2, '0');
+  const name = 'kalibracia-' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + '.json';
+  const RM = RAWMIC();
+  try {
+    if (RM && RM.fileOpen) { const f = await RM.fileOpen({ name, mime: 'application/json' }); let s = ''; for (let j = 0; j < bytes.length; j += 8192) s += String.fromCharCode.apply(null, bytes.subarray(j, j + 8192));
+      await RM.fileWrite({ id: f.id, d: btoa(s) }); const r = await RM.fileClose({ id: f.id }); return io('Kalibrácia je uložená: ' + r.path + '. Po preinštalovaní ju načítaš tlačidlom „Načítať kalibráciu zo súboru“.'); }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([bytes], { type: 'application/json' })); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+    io('Kalibrácia sa stiahla ako ' + name + '.');
+  } catch (e) { io('Kalibráciu sa nepodarilo uložiť: ' + (e && e.message || e)); }
+}
+function calLoad(file) {
+  const rd = new FileReader();
+  rd.onload = () => { try { const p = JSON.parse(rd.result); if (p.app !== 'bubnova-vyprava' || p.kind !== 'kalibracia') throw new Error('to nie je súbor s kalibráciou');
+      CAL_KEYS.forEach(k => { if (p[k] !== undefined) S[k] = k === 'off' ? { ...S.off, ...p.off } : p[k]; }); save(); micModel(); $('#mic-sens').value = S.micSens || 6;
+      io('Kalibrácia je načítaná (uložená ' + new Date(p.at).toLocaleString('sk-SK') + '). Bubny aj oneskorenie sú nastavené ako predtým.'); } catch (e) { io('Súbor sa nedá načítať: ' + (e && e.message || e)); } };
+  rd.readAsText(file);
+}
+$('#cal-save').addEventListener('click', calSave);
+$('#cal-load').addEventListener('click', () => $('#cal-file').click());
+$('#cal-file').addEventListener('change', e => { const f = e.target.files && e.target.files[0]; if (f) calLoad(f); e.target.value = ''; });
 // ---------- rozpoznanie bubnov podľa ich zvuku ----------
 // Pri kalibrácii sa pre každý bubon uloží „odtlačok“: sila zvuku v 8 frekvenčných pásmach (60 Hz až 8 kHz).
 // Pri hre sa každý úder rozloží na zmes odtlačkov (nezáporné najmenšie štvorce), takže sa rozpozná aj súčasný
