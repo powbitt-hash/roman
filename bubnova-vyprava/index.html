@@ -1030,7 +1030,7 @@ async function recSave(R) {
   const sr = ctx.sampleRate, g = R.g, pad = x => String(x).padStart(2, '0'), d = R.at;
   const name = 'bubny-' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds()) + '-' + g.level.id;
   const meta = { app: 'bubnova-vyprava', ver: document.getElementById('ver').textContent, sr, mic: MIC.src, audioT0: R.ch[0].t, level: g.level.id, bpm: g.level.bpm * (g.slow ? 0.75 : 1),
-    outLat: outLat(), offMic: S.off.mic || 0, micSource: S.micSource || 'auto', clip: CLIP.ns ? Number((CLIP.cl / CLIP.ns).toFixed(5)) : 0, win: WIN, notes: g.notes.map(n => [Number(n.t.toFixed(4)), n.lane, n.st === 1 ? 'hit' : 'miss']), hits: g.hits.map(h => ({ t: Number(h.t.toFixed(4)), nt: Number(h.nt.toFixed(4)), lane: h.lane, g: h.g, d: Number((h.d || 0).toFixed(4)) })), ev: R.ev, model: S.nmf, gates: S.gates, xtalk: S.xtalk, drumGate: S.drumGate, micGap: S.micGap,
+    outLat: outLat(), offMic: S.off.mic || 0, micSource: S.micSource || 'auto', clip: CLIP.ns ? Number((CLIP.cl / CLIP.ns).toFixed(5)) : 0, win: WIN, notes: g.notes.map(n => [Number(n.t.toFixed(4)), n.lane, n.st === 1 ? 'hit' : 'miss']), hits: g.hits.map(h => ({ t: Number(h.t.toFixed(4)), nt: h.nt != null ? Number(h.nt.toFixed(4)) : null, lane: h.lane, g: h.g, d: Number((h.d || 0).toFixed(4)) })), ev: R.ev, model: S.nmf, gates: S.gates, xtalk: S.xtalk, drumGate: S.drumGate, micGap: S.micGap,
     env: diagEnv(), result: R.res || null, latAfter: R.lat || [], log: (S.diag || []).filter(x => x.at > (S.diagLast || '')), mapNote: 'result/latAfter: výsledok levelu a zmeny oneskorenia hneď po ňom',
     note: 'notes: [čas, bubon] v čase zvukovej karty; zvuk začína v čase audioT0; úder do noty patrí, keď ev.t - outLat - offMic/1000 je do win od noty' };
   const wav = wavBytes(R.ch, sr), js = new TextEncoder().encode(JSON.stringify(meta)); S.diagLast = new Date().toISOString(); save();
@@ -1582,7 +1582,8 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) wake
 $('#opt-guide').addEventListener('click', () => { S.guide = !S.guide; save(); renderHome(); });
 function padsUi() { const on = !!S.travel; $('#g-padbox').hidden = !on; $('#opt-travel').setAttribute('aria-pressed', on); $('#g-pads').setAttribute('aria-pressed', on); $('#g-pads').textContent = on ? 'Skryť pady' : 'Ukázať pady'; }
 function travelSet(on) { S.travel = on; save(); padsUi(); diag('cestovatelsky', { on });
-  if (on && micTimer) $('#opt-mic').click();
+  if (on && micTimer) { S.micWasOn = true; $('#opt-mic').click(); }
+  else if (!on && S.micWasOn && !micTimer) { S.micWasOn = false; save(); $('#opt-mic').click(); }
   io(on ? 'Cestovateľský mód: ťukaj na pady na obrazovke. Hra nehrá metronóm ani vzor, počuješ len svoje ťuknutia. Mikrofón je vypnutý.' : 'Cestovateľský mód je vypnutý. Hra znova hrá metronóm a vzor.'); }
 $('#opt-travel').addEventListener('click', () => travelSet(!S.travel));
 $('#g-pads').addEventListener('click', () => travelSet(!S.travel));
