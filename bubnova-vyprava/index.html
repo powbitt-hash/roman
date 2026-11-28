@@ -543,7 +543,7 @@ function hit(lane, kind, tCtx) {
   const a = Math.abs(d);
   const pts = a <= PERFECT ? 100 : a <= GOOD ? 70 : 40;
   const grade = a <= PERFECT ? 'perfect' : a <= GOOD ? 'good' : 'bad';
-  G.hits.push({ t: th, nt: best.t, lane: best.lane, g: grade, d, at: ctx.currentTime });
+  G.hits.push({ t: th, nt: best.t, lane: best.lane, g: grade, d, at: ctx.currentTime, v: HITV ? HITV[best.lane] : null });
   burst(best.lane, GRADE_COL[grade], grade === 'perfect' ? 18 : grade === 'good' ? 12 : 7);
   G.combo++; G.maxCombo = Math.max(G.maxCombo, G.combo);
   if (G.combo % 10 === 0) G.pop = { txt: 'SÉRIA ' + G.combo + '!', t: ctx.currentTime };
@@ -560,7 +560,7 @@ function hit(lane, kind, tCtx) {
   hud();
 }
 const GRADE_COL = { perfect: '#9be58f', good: '#f2b63c', bad: '#ff6b5e', miss: '#aca6d8' };
-let micLane = null;
+let micLane = null, HITV = null;
 function burst(lane, col, n) { if (!G) return; const t = ctx.currentTime; G.waves.push({ lane, col, t }); for (let i = 0; i < n; i++) { const a = Math.random() * Math.PI * 2, v = 60 + Math.random() * 160; G.parts.push({ lane, col, t, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 40, r: 1.5 + Math.random() * 2.5 }); } }
 function fx(txt, color, lane) { if (G) G.fx.push({ txt, color, lane, t: ctx.currentTime }); }
 function flashPad(lane) { const p = document.querySelector('.pad[data-lane="' + lane + '"]'); if (!p) return; p.classList.add('on'); setTimeout(() => p.classList.remove('on'), 90); }
@@ -688,6 +688,7 @@ function finish() {
   const adj = g.dts.length >= 6 && Math.abs(mean) > 12 ? { kind: lastKind, ms: Math.round(mean / 5) * 5 } : null;
   diag('level', { level: lv.id, acc, stars, miss: g.miss, n, mean: Math.round(mean), hits: g.dts.length, input: lastKind, slow: !!g.slow });
   { const RR = REC && REC.g === g ? REC : PEND; if (RR) RR.res = { acc, stars, score: g.score, miss: g.miss, n, mean: Math.round(mean) }; }
+  const hr = handsReport(g); if (hr) { tip += ' ' + hr.txt; diag('ruky', Object.assign({ level: lv.id }, hr)); { const RR = REC && REC.g === g ? REC : PEND; if (RR) RR.hands = hr; } }
   result(lv, { stars, acc, score: g.score, combo: g.maxCombo, miss: g.miss, tip, xp, goalHit, adj, map: errMap(g), mean, nHits: g.dts.length });
 }
 
@@ -720,6 +721,21 @@ function result(lv, r) {
 }
 // Mapa chýb po cvičení: každý riadok sú dva takty, pre každý bubon jedna linka.
 // Krúžok je miesto noty, bodka je úder: zelená presne, žltá skoro/neskoro (s ms), červený krížik vynechané, sivý kosoštvorec navyše.
+// Vyrovnanosť rúk: cvičenie má prstoklad, takže vieme, ktorá nota je pravou a ktorá ľavou.
+// Porovnáme silu (z mikrofónu, v dB) a načasovanie pravých a ľavých úderov. Akcenty vynecháme, aby neskreslili silu.
+function handsReport(g) {
+  const hand = new Map(); g.notes.forEach(n => { if (n.hand === 'R' || n.hand === 'L') hand.set(n.lane + n.t.toFixed(4), n); });
+  const A = { R: { d: [], v: [] }, L: { d: [], v: [] } };
+  for (const h of g.hits) { if (h.nt == null) continue; const n = hand.get(h.lane + h.nt.toFixed(4)); if (!n || n.acc) continue; A[n.hand].d.push(h.d * 1000); if (h.v > 0.02) A[n.hand].v.push(20 * Math.log10(h.v)); }
+  if (A.R.d.length < 6 || A.L.d.length < 6) return null;
+  const med = a => { const q = [...a].sort((x, y) => x - y); return q.length ? q[q.length >> 1] : null; };
+  const dt = med(A.L.d) - med(A.R.d), dv = A.R.v.length >= 6 && A.L.v.length >= 6 ? med(A.L.v) - med(A.R.v) : null;
+  const parts = [];
+  if (dv != null && Math.abs(dv) >= 1.5) parts.push((dv < 0 ? 'ľavá je o ' : 'pravá je o ') + Math.abs(dv).toFixed(1).replace('.', ',') + ' dB tichšia');
+  if (Math.abs(dt) >= 8) parts.push((dt > 0 ? 'ľavá' : 'pravá') + ' udiera v priemere o ' + Math.round(Math.abs(dt)) + ' ms neskôr');
+  const txt = parts.length ? 'Ruky: ' + parts.join(' a ') + '.' : 'Ruky: pravá aj ľavá hrajú vyrovnane' + (dv == null ? ' v čase (silu meria len mikrofón).' : ' silou aj časom.');
+  return { txt, dt: Math.round(dt), dv: dv == null ? null : Number(dv.toFixed(1)), nR: A.R.d.length, nL: A.L.d.length };
+}
 function errMap(g) {
   if (!g || !g.notes.length) return '';
   const C = { ok: '#9be58f', off: '#f2b63c', miss: '#ff6b5e', extra: '#aca6d8' }, LN = { h: 'Hi-hat', s: 'Rytmičák', k: 'Kopák' };
@@ -931,7 +947,7 @@ $('#opt-mic').addEventListener('click', async () => {
       logHit(e.c, lanes, G ? 'hra' : 'voľne'); if (REC) REC.ev[REC.ev.length - 1].l = labOf(lanes);
       if (!lanes.length) { scopeHit(e.t, [], true); return; }
       hits++; micLane = scopeHit(e.t, ['all'].concat(lanes)); flashMeter();
-      if (G && G.level.calib) hit('any', 'mic', e.t); else lanes.forEach(l => hit(l, 'mic', e.t));
+      if (G && G.level.calib) hit('any', 'mic', e.t); else { HITV = e.c; lanes.forEach(l => hit(l, 'mic', e.t)); HITV = null; }
       if (!G) io('Mikrofón počúva. Zachytené údery: ' + hits + ' (naposledy ' + lanes.map(l => DRUM_NAME[l]).join(' + ') + ').');
     };
     $('#mic-ui').hidden = false; $('#pos-home').hidden = false; posUi(); micSrcUi(); if (S.travel) { S.travel = false; save(); padsUi(); }
@@ -1032,8 +1048,8 @@ async function recSave(R) {
   const sr = ctx.sampleRate, g = R.g, pad = x => String(x).padStart(2, '0'), d = R.at;
   const name = 'bubny-' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds()) + '-' + g.level.id;
   const meta = { app: 'bubnova-vyprava', ver: document.getElementById('ver').textContent, sr, mic: MIC.src, audioT0: R.ch[0].t, level: g.level.id, bpm: g.level.bpm * (g.slow ? 0.75 : 1),
-    outLat: outLat(), offMic: S.off.mic || 0, micSource: S.micSource || 'auto', clip: CLIP.ns ? Number((CLIP.cl / CLIP.ns).toFixed(5)) : 0, win: WIN, notes: g.notes.map(n => [Number(n.t.toFixed(4)), n.lane, n.st === 1 ? 'hit' : 'miss', n.hand || '', n.acc ? 1 : 0]), hits: g.hits.map(h => ({ t: Number(h.t.toFixed(4)), nt: h.nt != null ? Number(h.nt.toFixed(4)) : null, lane: h.lane, g: h.g, d: Number((h.d || 0).toFixed(4)) })), ev: R.ev, model: S.nmf, gates: S.gates, xtalk: S.xtalk, drumGate: S.drumGate, micGap: S.micGap,
-    env: diagEnv(), result: R.res || null, latAfter: R.lat || [], log: (S.diag || []).filter(x => x.at > (S.diagLast || '')), mapNote: 'result/latAfter: výsledok levelu a zmeny oneskorenia hneď po ňom',
+    outLat: outLat(), offMic: S.off.mic || 0, micSource: S.micSource || 'auto', clip: CLIP.ns ? Number((CLIP.cl / CLIP.ns).toFixed(5)) : 0, win: WIN, notes: g.notes.map(n => [Number(n.t.toFixed(4)), n.lane, n.st === 1 ? 'hit' : 'miss', n.hand || '', n.acc ? 1 : 0]), hits: g.hits.map(h => ({ t: Number(h.t.toFixed(4)), nt: h.nt != null ? Number(h.nt.toFixed(4)) : null, lane: h.lane, g: h.g, d: Number((h.d || 0).toFixed(4)), v: h.v != null ? Number(h.v.toFixed(3)) : null })), ev: R.ev, model: S.nmf, gates: S.gates, xtalk: S.xtalk, drumGate: S.drumGate, micGap: S.micGap,
+    env: diagEnv(), result: R.res || null, hands: R.hands || null, latAfter: R.lat || [], log: (S.diag || []).filter(x => x.at > (S.diagLast || '')), mapNote: 'result/latAfter: výsledok levelu a zmeny oneskorenia hneď po ňom',
     note: 'notes: [čas, bubon] v čase zvukovej karty; zvuk začína v čase audioT0; úder do noty patrí, keď ev.t - outLat - offMic/1000 je do win od noty' };
   const wav = wavBytes(R.ch, sr), js = new TextEncoder().encode(JSON.stringify(meta)); S.diagLast = new Date().toISOString(); save();
   const RM = RAWMIC();
