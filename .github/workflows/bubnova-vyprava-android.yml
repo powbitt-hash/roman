@@ -30,9 +30,9 @@ jobs:
       - name: Verzia v Androide
         run: sed -i 's/versionCode 1$/versionCode ${{ github.run_number }}/; s/versionName "1.0"/versionName "0.${{ github.run_number }}"/' android/app/build.gradle && grep -q 'versionCode ${{ github.run_number }}' android/app/build.gradle
       - name: Povolenie mikrofonu
-        run: sed -i 's#<uses-permission android:name="android.permission.INTERNET" />#&\n    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />#' android/app/src/main/AndroidManifest.xml
+        run: sed -i 's#<uses-permission android:name="android.permission.INTERNET" />#&\n    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-feature android:name="android.hardware.camera" android:required="false" />#' android/app/src/main/AndroidManifest.xml
       - name: Kontrola povolenia mikrofonu
-        run: grep -q 'android.permission.RECORD_AUDIO' android/app/src/main/AndroidManifest.xml
+        run: grep -q 'android.permission.RECORD_AUDIO' android/app/src/main/AndroidManifest.xml && grep -q 'android.permission.CAMERA' android/app/src/main/AndroidManifest.xml
       - run: npx cap sync android
       - name: Zostavenie APK
         working-directory: bubnova-vyprava/android

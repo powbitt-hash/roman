@@ -81,7 +81,7 @@ details p{margin-top:10px;font-size:.9rem;max-width:65ch}
 .hud b{font-family:var(--display);font-size:1.7rem;line-height:1;font-variant-numeric:tabular-nums;display:block}
 .scope{display:block;width:100%;height:190px;margin:10px 0;border-radius:var(--r);background:var(--panel)}#scope-game{height:130px}
 .dct{opacity:.55;transition:opacity .15s,transform .1s}.dct.cur{opacity:1;box-shadow:0 0 0 3px var(--c)}.dct.hit{opacity:1;transform:scale(1.06);box-shadow:0 0 24px var(--c)}.dct small.n{display:block!important}
-#dc-cue{height:clamp(170px,30vh,260px);margin:10px 0}.dcsum{margin:10px 0;padding-left:20px;line-height:1.6;max-width:65ch}.dcsum b{color:var(--brass)}
+#dc-cue{height:clamp(170px,30vh,260px);margin:10px 0}.camb{position:relative;max-width:480px;aspect-ratio:4/3;background:#000;border-radius:var(--r);overflow:hidden;margin:10px 0}.camb video,.camb canvas{position:absolute;inset:0;width:100%;height:100%;border-radius:0;background:transparent}.camb.mir video,.camb.mir canvas{transform:scaleX(-1)}#dc-campick.on{box-shadow:0 0 0 3px var(--brass)}.vt{border-collapse:collapse;margin:8px 0}.vt th,.vt td{padding:6px 10px;border:1px solid #3f3785;text-align:center}.vt td.ok{color:#9be58f;font-weight:800}.dcsum{margin:10px 0;padding-left:20px;line-height:1.6;max-width:65ch}.dcsum b{color:var(--brass)}
 .tune{display:grid;gap:10px;margin:10px 0;max-width:560px}.tune label{display:grid;grid-template-columns:1fr auto;gap:2px 12px;align-items:center}.tune input{grid-column:1/-1;width:100%}.tune b{font-variant-numeric:tabular-nums}.tune small{grid-column:1/-1;color:var(--muted)}
 #mic-meter div{transition:width .08s linear}#mic-meter.hit div{background:var(--good)}
 .prog{flex:1;min-width:120px;height:8px;border-radius:99px;background:var(--panel);overflow:hidden;align-self:center}
@@ -266,6 +266,8 @@ tr:last-child td{border-bottom:0}
         <button class="btn ghost" id="dc-back">Späť na turné</button>
       </div>
       <p id="dc-text" class="muted" style="max-width:65ch"></p>
+      <div id="dc-camwrap" hidden><div class="camb" id="dc-camb"><video id="dc-video" playsinline muted></video><canvas id="dc-camov"></canvas></div>
+        <div class="bar" style="align-items:center"><button class="chip" id="dc-campick">Vybrať farbu pásky</button><button class="chip" id="dc-camclr">Zabudnúť farby</button><button class="chip" id="dc-camflip">Otočiť kameru</button><span id="dc-camst" class="label"></span></div></div>
       <canvas id="dc-cue" hidden></canvas>
       <ul id="dc-sum" class="dcsum" hidden></ul>
       <div class="pads" id="dc-tiles">
@@ -275,7 +277,7 @@ tr:last-child td{border-bottom:0}
       </div>
       <canvas class="scope" id="scope-cal"></canvas>
       <textarea id="dc-exp" hidden readonly rows="4" style="width:100%;font-size:11px;background:var(--panel);color:var(--ink,#f4f0ff);border:0;border-radius:var(--r);padding:8px"></textarea>
-      <div class="bar"><button class="btn" id="dc-start">Začať kalibráciu</button><button class="btn" id="dc-done" hidden>Hotovo</button><button class="btn ghost" id="dc-test" hidden>Voľný test</button><button class="btn ghost" id="dc-export" hidden>Poslať dáta na ladenie</button><button class="btn ghost" id="dc-redo">Začať znova</button></div>
+      <div class="bar"><button class="btn" id="dc-start">Začať kalibráciu</button><button class="btn ghost" id="dc-camon">Zapnúť kameru</button><button class="btn ghost" id="dc-verify" hidden>Overenie kamerou</button><button class="btn" id="dc-done" hidden>Hotovo</button><button class="btn ghost" id="dc-test" hidden>Voľný test</button><button class="btn ghost" id="dc-export" hidden>Poslať dáta na ladenie</button><button class="btn ghost" id="dc-redo">Začať znova</button></div>
     </div>
   </section>
 
@@ -597,7 +599,7 @@ function finish() {
 
 // ---------- obrazovky ----------
 let current = null;
-function show(id) { document.body.classList.toggle('playing', id === 'game' || id === 'drumcal'); if (id !== 'drumcal') DC = null; ['home', 'game', 'result', 'report', 'editor', 'between', 'drumcal'].forEach(s => $('#' + s).hidden = s !== id); window.scrollTo(0, 0); }
+function show(id) { document.body.classList.toggle('playing', id === 'game' || id === 'drumcal'); if (id !== 'drumcal') { DC = null; camStop(); } ['home', 'game', 'result', 'report', 'editor', 'between', 'drumcal'].forEach(s => $('#' + s).hidden = s !== id); window.scrollTo(0, 0); }
 const starHtml = n => '<i>' + '★'.repeat(n) + '</i>' + '★'.repeat(3 - n);
 let ADJ = null;
 const KIND_NAME = { mic: 'mikrofón', touch: 'dotyk', key: 'klávesnica', midi: 'MIDI' };
@@ -899,7 +901,7 @@ function dcStartStep() {
   if (!micTimer || !ctx) { DC.msg = 'Mikrofón ešte nepočúva. Povoľ mikrofón a skús znova.'; drumCalRender(); return; }
   const st = DC_STEPS[DC.i]; DC.phase = 'run'; DC.msg = ''; DC.t0 = dcNow() + DC_LEAD; DC.cues = [];
   if (st.kind === 'quiet') { DC.noise = 0; DC.falseHits = 0; DC.nmf = false; DC.learn = []; DC.lab = []; DC.dts = []; S.drumOn = false; micModel(); micPost({ bg: 1 }); }
-  else if (st.kind === 'learn') { DC.learn = DC.learn.filter(h => h.l !== st.lane); for (let k = 0; k < st.n + 6; k++) DC.cues.push({ t: DC.t0 + k * st.gap, exp: [st.lane], hits: [] }); }
+  else if (st.kind === 'learn') { DC.learn = DC.learn.filter(h => h.l !== st.lane); if (CAM.on && S.camReg) S.camReg[st.lane] = []; for (let k = 0; k < st.n + 6; k++) DC.cues.push({ t: DC.t0 + k * st.gap, exp: [st.lane], hits: [] }); }
   else { DC.lab = DC.lab.filter(l => l.step !== st.id); st.pat.forEach((p, k) => DC.cues.push({ t: DC.t0 + k * st.gap, exp: p, hits: [], c: {} })); }
   drumCalRender();
 }
@@ -933,7 +935,7 @@ function dcQuietDone() {
   dcNext(S.micSens !== before ? 'V miestnosti je hluk, citlivosť som znížil z ' + before + ' na ' + S.micSens + '.' : 'Ticho je v poriadku.');
 }
 function dcLearnTry() {
-  const st = DC_STEPS[DC.i], hs = DC.cues.filter(c => c.hits.length).map(c => c.hits[0].spec);
+  const st = DC_STEPS[DC.i], hs = DC.cues.filter(c => c.hits.length && !c.hits[0].wait).map(c => c.hits[0].spec);
   if (hs.length < st.n) return;
   // vyhodíme údery, ktoré znejú inak ako ostatné (napr. sa ozval aj iný bubon)
   const fs = hs.map(s => lshape(hitShape(s))), c0 = fs[0].map((_, k) => fs.reduce((a, f) => a + f[k], 0) / fs.length);
@@ -942,6 +944,7 @@ function dcLearnTry() {
   if (keep.length < st.n - 1) return; // čakáme na ďalšie údery, kým nie je dosť podobných
   DC.learn = DC.learn.filter(h => h.l !== st.lane).concat(keep.map(spec => ({ l: st.lane, spec })));
   DC.res[st.lane] = { n: keep.length, drop: hs.length - keep.length };
+  if (S.camReg && S.camReg[st.lane] && S.camReg[st.lane].length > 2) { const r = camReg(st.lane); S.camReg[st.lane] = S.camReg[st.lane].filter(p => Math.hypot(p[0] - r.x, p[1] - r.y) <= r.r); }
   const lastT = DC.cues.filter(c => c.hits.length).pop().t; DC.cues = DC.cues.filter(c => c.t <= lastT);
   if (DRUMS.every(d => DC.learn.some(h => h.l === d)) && st.lane === 'h') {
     // všetky tri bubny naučené: zostavíme šablóny a ďalej už počúvame cez rozklad (NMF)
@@ -975,6 +978,7 @@ function dcTune() {
 // udalosť z mikrofónu: {t, spec} pri učení (surový úder) alebo {t, c: {k: r, s: r, h: r}} pri rozpoznávaní
 function drumCalHit(ev) {
   const now = dcNow(), t = ev.t;
+  if (DC.phase === 'verify') { if (ev.c) dcVerifyHit(ev); return; }
   if (DC.phase === 'test') { if (!ev.c) return; dcFixCommit(); const lanes = lanesOf(ev.c); scopeHit(t, lanes, !lanes.length); dcLight(lanes); logHit(ev.c, lanes, 'test');
     DC.last = { c: ev.c, lanes, at: performance.now() };
     DC.msg = (lanes.length ? 'Rozpoznané: ' + lanes.map(l => DRUM_NAME[l]).join(' + ') + '.' : 'Úder bol príliš slabý alebo nepodobný bubnu, appka ho ignoruje.')
@@ -988,6 +992,8 @@ function drumCalHit(ev) {
   if (st.kind === 'learn') {
     if (!ev.spec) return;
     if (c.hits.length) { DC.dts.push(t - c.hits[0].t); scopeHit(t, [], true); DC.flash = { t: now, text: 'Jeden úder som počul dvakrát' }; return; }
+    if (CAM.on && (st.lane === 's' || st.lane === 'h') && (S.camCols || []).length) { // kamera potvrdí, že úder bol na správnom bubne
+      c.hits.push({ t, tA, spec: ev.spec, wait: true }); scopeHit(t, [st.lane]); setTimeout(() => dcCamJudge(c, st), 140); drumCalRender(); return; }
     c.hits.push({ t, tA, spec: ev.spec }); scopeHit(t, [st.lane]); dcLight([st.lane]); dcLearnTry(); drumCalRender(); return;
   }
   if (!ev.c) return;
@@ -997,6 +1003,31 @@ function drumCalHit(ev) {
   DRUMS.forEach(d => { if ((ev.c[d] || 0) > (c.c[d] || 0)) c.c[d] = ev.c[d]; });
   if (!c.hits.length) c.hits.push({ t, tA });
   c.got = lanesOf(c.c); c.ok = dcSame(c.got, c.exp); scopeHit(t, lanes, !lanes.length); dcLight(lanes); drumCalRender();
+}
+function dcCamJudge(c, st) {
+  if (!DC || DC.phase !== 'run' || DC_STEPS[DC.i] !== st || !c.hits.length) return;
+  const h = c.hits[0], r = camAt(h.t), other = st.lane === 's' ? 'h' : 's', cs = DC.res.cam = DC.res.cam || { ok: 0, rej: 0, unsure: 0 };
+  let bad = null;
+  if (r.why === 'two') bad = 'Kamera videla dva údery naraz. Udri len do jedného bubna.';
+  else if (r.p) { const reg = camReg(st.lane);
+    if (camWhere(r.p) === other) bad = 'Kamera videla úder na ' + DRUM_NAME[other] + ', nie na ' + DRUM_NAME[st.lane] + '. Udri ešte raz.';
+    else if (reg && reg.n >= 2 && Math.hypot(r.p.x - reg.x, r.p.y - reg.y) > reg.r) bad = 'Kamera videla úder mimo ' + (st.lane === 's' ? 'rytmičáka' : 'hi-hatu') + '. Udri ešte raz.'; }
+  if (r.p) CAM.last = { t: ctx.currentTime, p: r.p, ok: !bad };
+  if (bad) { c.hits = []; cs.rej++; DC.flash = { t: dcNow(), text: bad }; DC.msg = bad; drumCalRender(); return; }
+  delete h.wait; if (r.p) { S.camReg = S.camReg || {}; S.camReg[st.lane] = (S.camReg[st.lane] || []).concat([[Number(r.p.x.toFixed(3)), Number(r.p.y.toFixed(3))]]).slice(-12); cs.ok++; } else cs.unsure++;
+  DC.msg = ''; dcLight([st.lane]); dcLearnTry(); drumCalRender();
+}
+function dcVerifyHit(ev) {
+  setTimeout(() => { if (!DC || DC.phase !== 'verify') return;
+    const r = camAt(ev.t), truth = r.p && !r.why ? camWhere(r.p) : '?', aud = lanesOf(ev.c).filter(d => d === 's' || d === 'h'), key = aud.length === 2 ? 'sh' : aud[0] || '-';
+    if (r.p) CAM.last = { t: ctx.currentTime, p: r.p, ok: truth !== '?' && key === truth };
+    DC.vt[truth][key]++; scopeHit(ev.t, lanesOf(ev.c), !lanesOf(ev.c).length); dcLight(lanesOf(ev.c)); drumCalRender(); }, 140);
+}
+function dcVerifyTable() {
+  const T = DC.vt, cols = [['s', 'rytmičák'], ['h', 'hi-hat'], ['sh', 'oboje'], ['-', 'nič']], row = (k, n) => '<tr><th>' + n + '</th>' + cols.map(([c]) => '<td' + (c === k ? ' class="ok"' : '') + '>' + T[k][c] + '</td>').join('') + '</tr>';
+  const tot = ['s', 'h'].reduce((a, k) => a + cols.reduce((b, [c]) => b + T[k][c], 0), 0), ok = T.s.s + T.h.h, unk = cols.reduce((b, [c]) => b + T['?'][c], 0);
+  return '<div style="overflow-x:auto"><table class="vt"><tr><th>kamera ↓ / zvuk →</th>' + cols.map(([, n]) => '<th>' + n + '</th>').join('') + '</tr>' + row('s', 'rytmičák') + row('h', 'hi-hat') + '</table></div>'
+    + '<p><b>Zhoda zvuku s kamerou: ' + (tot ? Math.round(ok / tot * 100) + ' %' : '–') + '</b> (' + ok + ' z ' + tot + ' úderov). Údery, pri ktorých kamera nevedela, kde boli: ' + unk + '. Kopák kamera nevidí, preto sa nepočíta.</p>';
 }
 function dcFixTap(lane) {
   if (!DC || DC.phase !== 'test' || !DC.last || performance.now() - DC.last.at > 8000) return;
@@ -1014,31 +1045,107 @@ function dcFixCommit() {
 }
 function dcExport() {
   const data = JSON.stringify({ app: 'bubnova-vyprava', ver: document.getElementById('ver').textContent, sr: ctx && ctx.sampleRate, set: { micSens: S.micSens, micGap: S.micGap, drumGate: S.drumGate, offMic: S.off.mic, gates: S.gates },
-    model: S.nmf, lab: S.nmfLab, hits: HITLOG.map(h => [h.c, h.r, h.v]) });
+    model: S.nmf, lab: S.nmfLab, camReg: S.camReg, verify: DC && DC.vt, hits: HITLOG.map(h => [h.c, h.r, h.v]) });
   const ta = $('#dc-exp'); ta.hidden = false; ta.value = data; ta.focus(); ta.select();
   const done = ok => { DC.msg = ok ? 'Dáta sú skopírované. Vlož ich do chatu (podrž prst a Vložiť), pomôžu mi vyladiť rozpoznávanie.' : 'Dáta sú v poli nižšie, je označené. Skopíruj ho a vlož do chatu.'; drumCalRender(); };
   try { navigator.clipboard.writeText(data).then(() => done(true), () => done(document.execCommand('copy'))); } catch (e) { done(document.execCommand('copy')); }
 }
 function dcLight(lanes) { document.querySelectorAll('#dc-tiles .dct').forEach(t => { if (lanes.includes(t.dataset.lane)) { t.classList.add('hit'); setTimeout(() => t.classList.remove('hit'), 220); } }); }
+// ---------- kamera: farebné pásky na paličkách (len pri kalibrácii a overení) ----------
+// Obraz sa spracúva len v tablete v malom rozlíšení a nikam sa neukladá. Čas úderu určuje vždy mikrofón,
+// kamera len potvrdzuje, kde úder bol (najnižší bod pásky okolo času úderu).
+const CAM = { on: false, stream: null, buf: [], pick: false, user: true, cw: 128, ch: 96, cv: null, g: null, last: null, err: '' };
+function rgb2hsv(r, g, b) { r /= 255; g /= 255; b /= 255; const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn; let h = 0;
+  if (d) h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; return [(h * 60 + 360) % 360, mx ? d / mx : 0, mx]; }
+const camMatch = (h, s, v) => (S.camCols || []).some(c => { const dh = Math.min(Math.abs(h - c.h), 360 - Math.abs(h - c.h)); return dh < 16 && s > Math.max(0.3, c.s * 0.55) && v > Math.max(0.2, c.v * 0.45); });
+async function camStart() {
+  if (CAM.on) return true;
+  try {
+    CAM.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: CAM.user ? 'user' : 'environment', width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 60 } }, audio: false });
+  } catch (e) { CAM.err = 'Kameru sa nepodarilo zapnúť. Povoľ kameru pre appku v nastaveniach tabletu.'; camUi(); return false; }
+  const v = $('#dc-video'); v.srcObject = CAM.stream; v.muted = true; await v.play().catch(() => {});
+  CAM.on = true; CAM.err = ''; CAM.buf = []; CAM.cv = document.createElement('canvas'); CAM.cv.width = CAM.cw; CAM.cv.height = CAM.ch; CAM.g = CAM.cv.getContext('2d', { willReadFrequently: true });
+  const me = CAM.stream; (function loop() { if (CAM.stream !== me) return; camFrame(); requestAnimationFrame(loop); })();
+  camUi(); return true;
+}
+function camStop() { if (CAM.stream) CAM.stream.getTracks().forEach(t => t.stop()); CAM.stream = null; CAM.on = false; CAM.buf = []; CAM.pick = false; const v = $('#dc-video'); if (v) v.srcObject = null; camUi(); }
+function camFrame() {
+  const v = $('#dc-video'); if (!v.videoWidth || !ctx) return;
+  const b = $('#dc-camb'); b.style.aspectRatio = v.videoWidth + ' / ' + v.videoHeight; b.classList.toggle('mir', CAM.user);
+  const W = CAM.cw, H = CAM.ch; CAM.g.drawImage(v, 0, 0, W, H); const px = CAM.g.getImageData(0, 0, W, H).data, m = new Uint8Array(W * H);
+  if ((S.camCols || []).length) for (let i = 0; i < W * H; i++) { const [h, s, vv] = rgb2hsv(px[i * 4], px[i * 4 + 1], px[i * 4 + 2]); if (camMatch(h, s, vv)) m[i] = 1; }
+  // súvislé oblasti masky = konce paličiek
+  const tips = [], st = [];
+  for (let i = 0; i < W * H; i++) { if (m[i] !== 1) continue; let n = 0, sx = 0, sy = 0; st.push(i); m[i] = 2;
+    while (st.length) { const j = st.pop(), x = j % W, y = (j / W) | 0; n++; sx += x; sy += y;
+      for (const k of [j - 1, j + 1, j - W, j + W]) if (k >= 0 && k < W * H && m[k] === 1 && Math.abs((k % W) - x) <= 1) { m[k] = 2; st.push(k); } }
+    if (n >= 3) tips.push({ x: sx / n / W, y: sy / n / H, a: n }); }
+  tips.sort((a, b) => b.a - a.a); tips.length = Math.min(tips.length, 3);
+  CAM.buf.push({ t: ctx.currentTime, tips }); while (CAM.buf.length && CAM.buf[0].t < ctx.currentTime - 2) CAM.buf.shift();
+  camDraw(tips);
+}
+// kde bol úder: najnižšia poloha pásky v okne okolo času úderu z mikrofónu
+function camAt(t) {
+  const fr = CAM.buf.filter(f => f.t >= t - 0.15 && f.t <= t + 0.12); if (!fr.length) return { why: 'nocam' };
+  let best = null; const lows = [];
+  fr.forEach(f => f.tips.forEach(p => { if (!best || p.y > best.y) best = p; lows.push(p); }));
+  if (!best) return { why: 'notip' };
+  // dve paličky dole naraz na rôznych miestach = dva údery, nevieme ktorý
+  const other = lows.filter(p => Math.hypot(p.x - best.x, p.y - best.y) > 0.18 && p.y > best.y - 0.04);
+  return other.length ? { why: 'two', p: best } : { p: best };
+}
+// oblasť bubna: medián polôh úderov (odolné voči jednému úderu vedľa) a polomer podľa typickej odchýlky
+const med = a => { const b = [...a].sort((x, y) => x - y); return b.length % 2 ? b[b.length >> 1] : (b[b.length / 2 - 1] + b[b.length / 2]) / 2; };
+const camReg = d => { const pts = (S.camReg && S.camReg[d]) || []; if (!pts.length) return null;
+  const mx = med(pts.map(p => p[0])), my = med(pts.map(p => p[1])), md = med(pts.map(p => Math.hypot(p[0] - mx, p[1] - my)));
+  return { x: mx, y: my, r: Math.min(0.25, Math.max(0.08, 3 * md)), n: pts.length }; };
+const camWhere = p => { let best = null; ['s', 'h'].forEach(d => { const r = camReg(d); if (!r) return; const dd = Math.hypot(p.x - r.x, p.y - r.y) / r.r; if (dd <= 1 && (!best || dd < best.dd)) best = { d, dd }; }); return best ? best.d : '?'; };
+function camDraw(tips) {
+  const cv = $('#dc-camov'), W = cv.clientWidth, H = cv.clientHeight; if (!W) return; const dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H); g.lineWidth = 3;
+  ['s', 'h'].forEach(d => { const r = camReg(d); if (!r) return; g.strokeStyle = COL[d]; g.beginPath(); g.ellipse(r.x * W, r.y * H, r.r * W, r.r * H, 0, 0, 7); g.stroke(); });
+  tips.forEach(p => { g.strokeStyle = '#fff'; g.beginPath(); g.arc(p.x * W, p.y * H, 8, 0, 7); g.stroke(); });
+  if (CAM.last && ctx.currentTime - CAM.last.t < 0.8) { g.fillStyle = CAM.last.ok ? '#9be58f' : '#ff6b5e'; g.beginPath(); g.arc(CAM.last.p.x * W, CAM.last.p.y * H, 12, 0, 7); g.fill(); }
+}
+function camUi() {
+  const ph = DC && DC.phase, show = !!DC && ph !== 'summary';
+  $('#dc-camon').textContent = CAM.on ? 'Vypnúť kameru' : 'Zapnúť kameru'; $('#dc-camon').hidden = !DC || ph === 'summary';
+  $('#dc-camwrap').hidden = !CAM.on || !show;
+  const n = (S.camCols || []).length;
+  $('#dc-camst').textContent = CAM.err || (CAM.pick ? 'Ťukni v obraze na farebnú pásku na konci paličky.' : !n ? 'Najprv vyber farbu pásky na paličkách.' : 'Sledujem ' + n + (n === 1 ? ' farbu' : ' farby') + ' pásky. Obraz sa spracúva len v tablete a neukladá sa.');
+  $('#dc-campick').classList.toggle('on', CAM.pick);
+}
+function camPickAt(ev) {
+  if (!CAM.pick || !CAM.g) return; const r = ev.currentTarget.getBoundingClientRect(); let x = (ev.clientX - r.left) / r.width; const y = (ev.clientY - r.top) / r.height; if (CAM.user) x = 1 - x;
+  const X = Math.round(x * CAM.cw), Y = Math.round(y * CAM.ch), px = CAM.g.getImageData(Math.max(0, X - 2), Math.max(0, Y - 2), 5, 5).data; let R = 0, G2 = 0, B = 0;
+  for (let i = 0; i < px.length; i += 4) { R += px[i]; G2 += px[i + 1]; B += px[i + 2]; } const n = px.length / 4, [h, s, v] = rgb2hsv(R / n, G2 / n, B / n);
+  if (s < 0.25 || v < 0.15) { CAM.err = 'Toto miesto nemá výraznú farbu. Ťukni presne na pásku.'; camUi(); CAM.err = ''; return; }
+  S.camCols = (S.camCols || []).concat([{ h: Math.round(h), s: Number(s.toFixed(2)), v: Number(v.toFixed(2)) }]).slice(-2); CAM.pick = false; save(); camUi();
+}
+
 function drumCalRender() {
   if (!DC) return;
   const st = DC_STEPS[Math.min(DC.i, DC_STEPS.length - 1)], ph = DC.phase;
-  $('#dc-step').textContent = ph === 'intro' ? 'Sprievodca kalibráciou' : ph === 'summary' ? 'Hotovo' : ph === 'test' ? 'Voľný test' : 'Krok ' + (DC.i + 1) + ' z ' + DC_STEPS.length;
-  $('#dc-title').textContent = ph === 'intro' ? 'Naučme appku tvoje bubny' : ph === 'summary' ? 'Kalibrácia dokončená' : ph === 'test' ? 'Udri do ľubovoľného bubna' : st.title;
-  $('#dc-text').textContent = DC.msg || (ph === 'intro' ? 'Prejdeme ' + DC_STEPS.length + ' krátkych krokov, asi 2 minúty. Appka ti vždy povie, čo máš urobiť: najprv ticho, potom každý bubon zvlášť, potom údery za sebou a nakoniec dva bubny naraz. Polož tablet tak, aby mikrofón mieril k bubnom, a vezmi paličky.'
+  $('#dc-step').textContent = ph === 'intro' ? 'Sprievodca kalibráciou' : ph === 'summary' ? 'Hotovo' : ph === 'test' ? 'Voľný test' : ph === 'verify' ? 'Overenie kamerou' : 'Krok ' + (DC.i + 1) + ' z ' + DC_STEPS.length;
+  $('#dc-title').textContent = ph === 'intro' ? 'Naučme appku tvoje bubny' : ph === 'summary' ? 'Kalibrácia dokončená' : ph === 'test' ? 'Udri do ľubovoľného bubna' : ph === 'verify' ? 'Zvuk verzus kamera' : st.title;
+  $('#dc-text').textContent = DC.msg || (ph === 'intro' ? 'Prejdeme ' + DC_STEPS.length + ' krátkych krokov, asi 2 minúty. Appka ti vždy povie, čo máš urobiť: najprv ticho, potom každý bubon zvlášť, potom údery za sebou a nakoniec dva bubny naraz. Polož tablet tak, aby mikrofón mieril k bubnom, a vezmi paličky. Ak máš na koncoch paličiek farebnú pásku, zapni kameru: postráži, aby sa appka učila len zo správnych úderov.'
     : ph === 'summary' ? 'Tu je, čo sa appka naučila a čo nastavila. Ak niečo nesedí, spusti kalibráciu znova.'
+    : ph === 'verify' ? 'Hraj čokoľvek na rytmičák a hi-hat, aj naraz s kopákom. Kamera sleduje pásky na paličkách a tabuľka ukazuje, ako často sa zvuková metóda zhoduje s tým, čo videla kamera.'
     : ph === 'test' ? 'Udri do bubna a rozpoznaný bubon sa rozsvieti. Keď sa appka pomýli, ťukni na bubon, ktorý si naozaj udrel, a appka sa to naučí.' : st.text);
   const lanes = ph === 'run' || ph === 'pause' || ph === 'retry' ? (st.kind === 'learn' ? [st.lane] : st.kind === 'check' ? [...new Set(st.pat.flat())] : []) : [];
   document.querySelectorAll('#dc-tiles .dct').forEach(t => { const ln = t.dataset.lane; t.classList.toggle('cur', lanes.includes(ln) || !!(ph === 'test' && DC.fix && DC.fix.has(ln)));
-    t.querySelector('.n').textContent = ph === 'run' && st.kind === 'learn' && ln === st.lane ? Math.min(st.n, DC.cues.filter(c => c.hits.length).length) + ' / ' + st.n : DC.res[ln] || (ph === 'test' && drumCalibrated()) ? 'naučený' : ''; });
-  $('#dc-start').hidden = ph !== 'intro'; $('#dc-done').hidden = ph !== 'summary' && ph !== 'test'; $('#dc-test').hidden = ph !== 'summary'; $('#dc-export').hidden = ph !== 'summary' && ph !== 'test'; if (ph !== 'summary' && ph !== 'test') $('#dc-exp').hidden = true;
-  $('#dc-redo').hidden = ph === 'intro'; $('#dc-cue').hidden = ph === 'summary' || ph === 'intro' || ph === 'test';
-  $('#dc-sum').hidden = ph !== 'summary'; if (ph === 'summary') $('#dc-sum').innerHTML = dcSummary();
+    t.querySelector('.n').textContent = ph === 'run' && st.kind === 'learn' && ln === st.lane ? Math.min(st.n, DC.cues.filter(c => c.hits.length && !c.hits[0].wait).length) + ' / ' + st.n : DC.res[ln] || (ph === 'test' && drumCalibrated()) ? 'naučený' : ''; });
+  $('#dc-start').hidden = ph !== 'intro'; $('#dc-done').hidden = ph !== 'summary' && ph !== 'test' && ph !== 'verify'; $('#dc-verify').hidden = ph !== 'summary' && ph !== 'test'; $('#dc-test').hidden = ph !== 'summary'; $('#dc-export').hidden = ph !== 'summary' && ph !== 'test'; if (ph !== 'summary' && ph !== 'test') $('#dc-exp').hidden = true;
+  $('#dc-redo').hidden = ph === 'intro'; $('#dc-cue').hidden = ph === 'summary' || ph === 'intro' || ph === 'test' || ph === 'verify';
+  $('#dc-sum').hidden = ph !== 'summary' && ph !== 'verify'; if (ph === 'summary') $('#dc-sum').innerHTML = dcSummary(); if (ph === 'verify') $('#dc-sum').innerHTML = dcVerifyTable();
+  camUi();
 }
 function dcSummary() {
   const r = DC.res, li = [], pct = x => Math.round(x * 100) + ' %';
   if (r.quiet) li.push(['Hluk v miestnosti', r.quiet.to !== r.quiet.from ? 'citlivosť znížená z ' + r.quiet.from + ' na ' + r.quiet.to : 'v poriadku, citlivosť ' + r.quiet.to]);
   DRUMS.forEach(d => { if (r[d]) li.push([DRUM_NAME[d][0].toUpperCase() + DRUM_NAME[d].slice(1), 'zvuk naučený z ' + r[d].n + ' úderov' + (r[d].drop ? ' (' + r[d].drop + ' odlišné vynechané)' : '')]); });
+  if (r.cam) li.push(['Kamera', 'potvrdila ' + r.cam.ok + ' úderov, ' + r.cam.rej + ' mimo bubna alebo naraz vyhodila' + (r.cam.unsure ? ', pri ' + r.cam.unsure + ' paličku nevidela' : '')]);
   if (r.sep != null) li.push(['Rozlíšiteľnosť bubnov', pct(r.sep) + (r.sep >= 0.9 ? ', výborné' : r.sep >= 0.75 ? ', dobré' : ', slabé, skús tablet posunúť bližšie')]);
   DC_STEPS.filter(s => s.kind === 'check').forEach(s => { const x = r[s.id]; if (x) li.push([s.title, 'správne ' + (x.tuned != null ? x.tuned : x.ok) + ' z ' + x.tot + (x.tuned != null && x.tuned !== x.ok ? ' (po doladení, pôvodne ' + x.ok + ')' : '')]); });
   if (r.gates) li.push(['Prah pre každý bubon', DRUMS.map(d => DRUM_NAME[d] + ' ' + Math.round(gateRule(d).t * 100) + ' %').join(', ')]);
@@ -1184,6 +1291,14 @@ $('#dc-done').addEventListener('click', () => { show('home'); renderHome(); io('
 $('#dc-redo').addEventListener('click', () => { DC.i = 0; DC.res = {}; DC.lab = []; DC.dts = []; DC.msg = ''; dcStartStep(); });
 $('#dc-start').addEventListener('click', dcStartStep);
 $('#dc-export').addEventListener('click', dcExport);
+$('#dc-camon').addEventListener('click', () => { if (CAM.on) camStop(); else camStart(); });
+$('#dc-campick').addEventListener('click', () => { CAM.pick = !CAM.pick; camUi(); });
+$('#dc-camclr').addEventListener('click', () => { S.camCols = []; save(); camUi(); });
+$('#dc-camflip').addEventListener('click', async () => { CAM.user = !CAM.user; camStop(); await camStart(); });
+$('#dc-camov').addEventListener('pointerdown', camPickAt);
+$('#dc-verify').addEventListener('click', async () => {
+  if (!drumCalibrated() || !camReg('s') || !camReg('h') || camReg('s').n < 2 || camReg('h').n < 2) { DC.msg = 'Na overenie treba najprv prejsť kalibráciu so zapnutou kamerou, aby appka vedela, kde je rytmičák a hi-hat.'; drumCalRender(); return; }
+  if (!(await camStart())) return; DC.phase = 'verify'; DC.nmf = true; DC.msg = ''; micModel(); DC.vt = {}; ['s', 'h', '?'].forEach(k => DC.vt[k] = { s: 0, h: 0, sh: 0, '-': 0 }); drumCalRender(); });
 document.querySelectorAll('#dc-tiles .dct').forEach(t => t.addEventListener('pointerdown', () => dcFixTap(t.dataset.lane)));
 $('#drum-test').addEventListener('click', () => { if (!drumCalibrated()) { io('Najprv spusti „Kalibrovať bubny“. Táto verzia rozpoznáva bubny inak, preto treba kalibráciu zopakovať.'); return; } drumCalOpen(); DC.phase = 'test'; DC.nmf = true; micModel(); drumCalRender(); });
 $('#dc-test').addEventListener('click', () => { DC.phase = 'test'; DC.msg = ''; DC.last = null; drumCalRender(); });
@@ -1406,6 +1521,6 @@ document.addEventListener('visibilitychange', () => { if (document.hidden && G &
 
 if ($('#ver').textContent.includes('__')) $('#ver').hidden = true; // verziu dopĺňa len zostavenie aplikácie
 renderHome();
-window.__bubny = { get G() { return G; }, hit, start, ALL, get ctx() { return ctx; }, get DC() { return DC; }, drumCalHit, get S() { return S; }, nmfSolve, buildModel, lanesOf };
+window.__bubny = { get G() { return G; }, hit, start, ALL, get ctx() { return ctx; }, get DC() { return DC; }, drumCalHit, get S() { return S; }, nmfSolve, buildModel, lanesOf, CAM, camAt, camReg };
 })();
 </script>
