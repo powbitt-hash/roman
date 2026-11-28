@@ -706,8 +706,8 @@ function bq(type,f,q,sr){const w=2*Math.PI*f/sr,c=Math.cos(w),s=Math.sin(w),a=s/
 if(type==='lp'){b0=(1-c)/2;b1=1-c;b2=(1-c)/2}else if(type==='hp'){b0=(1+c)/2;b1=-(1+c);b2=(1+c)/2}else{b0=a;b1=0;b2=-a}
 const a0=1+a;return{b0:b0/a0,b1:b1/a0,b2:b2/a0,a1:-2*c/a0,a2:(1-a)/a0,x1:0,x2:0,y1:0,y2:0}}
 ${nmfSolve.toString()}
-const NMF_IT=100;${drumAct.toString()}
-const HOP=256,SUB=64,DEC=0.06,SPEC_N=14;
+const NMF_IT=50;${drumAct.toString()}
+const HOP=256,SUB=64,DEC=0.045,SPEC_N=14;
 class O extends AudioWorkletProcessor{constructor(){super();this.thr=0.08;this.gap=0.09;this.last=-1;this.ext=false;this.rec=null;
 this.B=[{n:'all',f:null,g:1},{n:'k',f:bq('lp',150,0.7,sampleRate),g:1.2},{n:'s',f:bq('bp',700,0.9,sampleRate),g:0.8},{n:'h',f:bq('hp',5000,0.7,sampleRate),g:0.45}];
 for(const b of this.B){b.env=0;b.slow=0.003;b.last=-1}
@@ -735,7 +735,7 @@ const P=this.oh[1],Q=this.oh[0],R=this.oh[2],tp=P.t-HOP/sampleRate*2;
 if(this.ev){const E=this.ev;if(P.t>E.pt){for(let d=0;d<3;d++)E.s[d]+=P.g[d]/M.ref[d];E.n++}
 if(P.t>E.t+DEC){this.port.postMessage({ev:E.t,r:E.r,s:E.s.map(v=>v/Math.max(1,E.n))});this.ev=null}}
 for(let d=0;d<3;d++){const v=P.o[d];
-if(v>0&&v>=Q.o[d]&&v>R.o[d]&&v>this.avg[d]*2.5){const r=v/M.ref[d];
+if(v>0&&v>=Q.o[d]&&v>R.o[d]&&v>this.avg[d]*4.5){const r=v/M.ref[d];
 if(r>=0.08&&(tp-this.le[d]>=this.gap||v>this.lo[d]*1.5)){this.le[d]=tp;this.lo[d]=v;
 if(!this.ev)this.ev={t:this.refine(tp),pt:P.t,r:[0,0,0],s:[0,0,0],n:0};if(r>this.ev.r[d])this.ev.r[d]=r}}
 this.avg[d]=this.avg[d]*0.92+Q.o[d]*0.08}}
@@ -751,7 +751,8 @@ if(++this.cnt>=HOP){this.cnt=0;this.frame(t+1/sr)}
 if(this.M)continue;
 for(const b of this.B){let y=x;if(b.f){const f=b.f;y=f.b0*x+f.b1*f.x1+f.b2*f.x2-f.a1*f.y1-f.a2*f.y2;f.x2=f.x1;f.x1=x;f.y2=f.y1;f.y1=y}
 const v=Math.abs(y),prev=b.env;b.env=v>b.env?v:b.env*this.df;b.slow=b.slow*this.ds+b.env*(1-this.ds);
-if(b.env>this.thr*b.g&&b.env>prev&&b.env>b.slow*2.2&&prev<this.thr*b.g*0.9+b.slow*1.2&&t-b.last>this.gap){b.last=t;
+if(!b.arm&&b.env<this.thr*b.g*0.7+b.slow*1.2)b.arm=1;
+if(b.arm&&b.env>this.thr*b.g&&b.env>b.slow*2.2&&t-b.last>this.gap){b.arm=0;b.last=t;
 if(this.pend&&t-this.pend.t<0.05){if(this.pend.bands.indexOf(b.n)<0)this.pend.bands.push(b.n)}else if(!this.pend&&this.ok(t)){this.pend={t:t,bands:[b.n],spec:[this.prev],pk:0}}}}
 if(this.pend&&this.B[0].env>this.pend.pk)this.pend.pk=this.B[0].env}}
 ok(t){const dt=t-this.last;if(dt<this.gap)return false;return this.B[0].env>this.hitLvl*Math.exp(-dt/0.12)*2.2}
@@ -922,7 +923,7 @@ const wantNmf = () => drumCalibrated() && (S.drumOn || !!(DC && DC.nmf));
 // rozhodnutie pre každý bubon: jeho aktivita mínus presluch od ostatných bubnov musí prekročiť prah
 const gateRule = d => { const g = S.gates && S.gates[d]; return typeof g === 'number' ? { t: g, b: {} } : g || { t: 0.3, b: {} }; };
 const gateOf = d => gateRule(d).t * (S.drumGate || 30) / 30;
-// hodnota bubna = sila nárastu (r) + váha w × doznievanie počas 60 ms po údere (hi-hat doznieva inak ako rytmičák)
+// hodnota bubna = sila nárastu (r) + váha w × doznievanie počas 45 ms po údere (hi-hat doznieva inak ako rytmičák)
 const CK = ['k', 's', 'h', 'k_', 's_', 'h_'];
 const evC = (r, s) => { const c = {}; DRUMS.forEach((d, j) => { c[d] = Number(r[j].toPrecision(3)); c[d + '_'] = Number((s ? s[j] : 0).toPrecision(3)); }); return c; };
 const cVal = (c, d, w) => (c[d] || 0) + (w || 0) * (c[d + '_'] || 0);
@@ -934,7 +935,7 @@ function hitShape(spec) { const K = spec[0].length, a = new Array(K).fill(0);
 const lshape = s => s.map(x => Math.log10(x + 1e-4));
 function ddist(a, b) { let s = 0; for (let i = 0; i < a.length; i++) { const d = a[i] - b[i]; s += d * d; } return Math.sqrt(s); }
 // rovnaký výpočet ako v mikrofóne: najväčší nárast aktivity bubna počas úderu
-const NMF_IT = 100;
+const NMF_IT = 50;
 // aktivita každého bubna = súčet aktivít jeho šablón (každý kalibračný úder je vlastná šablóna)
 function drumAct(x, M) { const g = nmfSolve(x.map((v, k) => v / M.sc[k]), M.W, new Float64Array(M.W.length), NMF_IT), a = [0, 0, 0]; for (let j = 0; j < g.length; j++) if (M.grp[j] < 3) a[M.grp[j]] += g[j]; return a; }
 // rovnaký výpočet ako v mikrofóne: najväčší nárast aktivity bubna a priemerná aktivita počas ~50 ms po ňom
