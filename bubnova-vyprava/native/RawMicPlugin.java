@@ -47,12 +47,24 @@ public class RawMicPlugin extends Plugin {
         int sr = call.getInt("sr", 48000);
         AudioManager am = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
         boolean un = Build.VERSION.SDK_INT >= 24 && "true".equals(am.getProperty(AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED));
-        int src = un ? MediaRecorder.AudioSource.UNPROCESSED : MediaRecorder.AudioSource.VOICE_RECOGNITION;
+        String want = call.getString("source", "auto");
+        java.util.ArrayList<String> order = new java.util.ArrayList<>();
+        if (!"auto".equals(want)) order.add(want);
+        if (un) order.add("unprocessed");
+        order.add("voice_recognition");
+        order.add("mic");
         int min = AudioRecord.getMinBufferSize(sr, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
-        try {
-            rec = new AudioRecord(src, sr, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(min, sr / 5));
-        } catch (Exception e) { call.reject("init: " + e.getMessage()); return; }
-        if (rec.getState() != AudioRecord.STATE_INITIALIZED) { rec.release(); rec = null; call.reject("init"); return; }
+        String used = null;
+        for (String nm : order) {
+            int src = srcId(nm);
+            if (src < 0) continue;
+            try {
+                AudioRecord a = new AudioRecord(src, sr, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(min, sr / 5));
+                if (a.getState() == AudioRecord.STATE_INITIALIZED) { rec = a; used = nm; break; }
+                a.release();
+            } catch (Exception ignored) {}
+        }
+        if (rec == null) { call.reject("init"); return; }
         int sid = rec.getAudioSessionId();
         try { if (AutomaticGainControl.isAvailable()) { AutomaticGainControl x = AutomaticGainControl.create(sid); if (x != null) x.setEnabled(false); } } catch (Exception ignored) {}
         try { if (NoiseSuppressor.isAvailable()) { NoiseSuppressor x = NoiseSuppressor.create(sid); if (x != null) x.setEnabled(false); } } catch (Exception ignored) {}
@@ -80,9 +92,20 @@ public class RawMicPlugin extends Plugin {
         th.setPriority(Thread.MAX_PRIORITY);
         th.start();
         JSObject res = new JSObject();
-        res.put("src", un ? "unprocessed" : "voice_recognition");
+        res.put("src", used);
         res.put("sr", rec.getSampleRate());
         call.resolve(res);
+    }
+
+    private static int srcId(String nm) {
+        switch (nm) {
+            case "voice_performance": return Build.VERSION.SDK_INT >= 29 ? MediaRecorder.AudioSource.VOICE_PERFORMANCE : -1;
+            case "unprocessed": return Build.VERSION.SDK_INT >= 24 ? MediaRecorder.AudioSource.UNPROCESSED : -1;
+            case "voice_recognition": return MediaRecorder.AudioSource.VOICE_RECOGNITION;
+            case "camcorder": return MediaRecorder.AudioSource.CAMCORDER;
+            case "mic": return MediaRecorder.AudioSource.MIC;
+            default: return -1;
+        }
     }
 
     private void stopRec() {

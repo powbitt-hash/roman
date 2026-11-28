@@ -163,6 +163,7 @@ tr:last-child td{border-bottom:0}
           <button class="chip" id="opt-midi" aria-pressed="false">Elektronické bicie (MIDI)</button>
           <button class="chip" id="opt-mic" aria-pressed="false">Mikrofón (pad, akustické bicie)</button>
           <button class="chip" id="opt-rawmic" aria-pressed="true" hidden>Surový mikrofón (Android)</button>
+          <button class="chip" id="opt-micsrc" hidden>Zdroj zvuku: automaticky</button>
           <button class="chip" id="opt-rec" aria-pressed="false">Nahrávať hru na meranie</button>
         </div>
         <div class="bar" id="mic-ui" hidden style="align-items:center"><span class="label">Hlasitosť</span><div class="prog" id="mic-meter"><div></div></div><label class="label" style="display:flex;align-items:center;gap:8px">Citlivosť <input id="mic-sens" type="range" min="1" max="10" step="1"></label><button class="chip" id="drum-calib">Kalibrovať bubny</button><button class="chip" id="drum-test">Vyskúšať rozpoznanie</button><button class="chip" id="mic-calib">Kalibrovať oneskorenie</button><button class="chip" id="cal-save">Uložiť kalibráciu do súboru</button><button class="chip" id="cal-load">Načítať kalibráciu zo súboru</button><input type="file" id="cal-file" accept=".json,application/json" hidden><span class="label" id="mic-src"></span></div>
@@ -747,8 +748,8 @@ this.avg[d]=this.avg[d]*0.92+Q.o[d]*0.08}}
 process(inp){if(this.ext)return true;const ch=inp[0]&&inp[0][0];if(ch)this.feed(ch,currentTime);return true}
 feed(ch,t0){const K=this.K,A=this.A,acc=this.acc,sr=sampleRate;
 for(let i=0;i<ch.length;i++){const x=ch[i],t=t0+i/sr;
-if(!this.wn){this.wt=t;this.wmn=0;this.wmx=0}if(x<this.wmn)this.wmn=x;if(x>this.wmx)this.wmx=x;
-if(++this.wn>=128){this.wn=0;this.wf.push(this.wmn,this.wmx);if(this.wf.length===2)this.wf0=this.wt;if(this.wf.length>=16){this.port.postMessage({wf:this.wf,t:this.wf0,dt:128/sr});this.wf=[]}}
+if(!this.wn){this.wt=t;this.wmn=0;this.wmx=0}if(x<this.wmn)this.wmn=x;if(x>this.wmx)this.wmx=x;this.ns=(this.ns||0)+1;if(x>=0.985||x<=-0.985)this.ncl=(this.ncl||0)+1;
+if(++this.wn>=128){this.wn=0;this.wf.push(this.wmn,this.wmx);if(this.wf.length===2)this.wf0=this.wt;if(this.wf.length>=16){this.port.postMessage({wf:this.wf,t:this.wf0,dt:128/sr,cl:this.ncl||0,ns:this.ns});this.wf=[];this.ncl=0;this.ns=0}}
 if(this.rec){const R=this.rec;if(R.t<0)R.t=t;R.b[R.n++]=x;if(R.n>=R.b.length){this.port.postMessage({rec:R.b,t:R.t});R.b=new Float32Array(8192);R.n=0;R.t=-1}}
 this.se+=x*x;if(++this.sc>=SUB){this.sub.push({t:t-(SUB-1)/sr,e:this.se/SUB});if(this.sub.length>40)this.sub.shift();this.se=0;this.sc=0}
 for(let k=0;k<K;k++){const f=A[k],y=f.b0*x+f.b1*f.x1+f.b2*f.x2-f.a1*f.y1-f.a2*f.y2;f.x2=f.x1;f.x1=x;f.y2=f.y1;f.y1=y;acc[k]+=y*y}
@@ -801,7 +802,7 @@ $('#opt-mic').addEventListener('click', async () => {
       try {
         if (!micModule) { micModule = URL.createObjectURL(new Blob([MIC_WORKLET], { type: 'application/javascript' })); await ctx.audioWorklet.addModule(micModule); }
         node = new AudioWorkletNode(ctx, 'bubny-onset7', { numberOfInputs: 1, numberOfOutputs: 0 });
-        node.port.onmessage = e => { const m = e.data; if (m.ev != null) onEvent({ t: m.ev, c: evC(m.r, m.s) }); else if (m.rec) recChunk(m.rec, m.t); else if (m.recEnd) recDone(); else if (m.hit != null) onHit(m.hit, m.bands, m.spec); else if (m.wf) scopeWave(m.t, m.dt, m.wf, bar); else if (m.bgSpec && DC) DC.bg = m.bgSpec; };
+        node.port.onmessage = e => { const m = e.data; if (m.ev != null) onEvent({ t: m.ev, c: evC(m.r, m.s) }); else if (m.rec) recChunk(m.rec, m.t); else if (m.recEnd) recDone(); else if (m.hit != null) onHit(m.hit, m.bands, m.spec); else if (m.wf) { scopeWave(m.t, m.dt, m.wf, bar); clipAdd(m.cl || 0, m.ns || 0); } else if (m.bgSpec && DC) DC.bg = m.bgSpec; };
         const cfg = () => node.port.postMessage({ thr: micThr(), gap: (S.micGap || 110) / 1000, model: wantNmf() ? S.nmf : null });
         cfg(); micSrc.connect(node); micNode = node;
         if (RAWMIC() && S.rawMic !== false) rawStart(node);
@@ -831,7 +832,16 @@ if (S.mic) addEventListener('pointerdown', function again() { removeEventListene
 // a posielame ho do toho istého spracovania. Keď to tablet nevie, zostane bežný mikrofón.
 const RAWMIC = () => window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.RawMic;
 const MIC = { src: 'web', h: null, on: false };
-const micSrcUi = () => { const e = $('#mic-src'); if (e) e.textContent = 'Zdroj: ' + (MIC.src === 'unprocessed' ? 'surový (UNPROCESSED)' : MIC.src === 'voice_recognition' ? 'surový (VOICE_RECOGNITION)' : 'bežný mikrofón WebView'); };
+// Preťaženie mikrofónu: tablet tesne pri činele dostáva taký silný zvuk, že ho mikrofón oreže (skreslí). Sledujeme podiel
+// orezaných vzoriek za posledné ~2 s a za celý krok kalibrácie / úroveň; pri preťažení appka poradí iný zdroj zvuku alebo otočenie tabletu.
+const CLIP = { w: [], cl: 0, ns: 0, warnAt: 0 };
+function clipAdd(cl, ns) { CLIP.w.push([cl, ns]); if (CLIP.w.length > 50) CLIP.w.shift(); CLIP.cl += cl; CLIP.ns += ns; if (DC) { DC.cl = (DC.cl || 0) + cl; DC.ns = (DC.ns || 0) + ns; }
+  const r = clipRecent(); micSrcUi(r);
+  if (r > 0.003 && performance.now() - CLIP.warnAt > 15000 && !G) { CLIP.warnAt = performance.now(); io('Mikrofón je preťažený: najsilnejšie údery sú skreslené. ' + CLIP_TIP); } }
+const clipRecent = () => { let a = 0, b = 0; for (const [c, n] of CLIP.w) { a += c; b += n; } return b ? a / b : 0; };
+const CLIP_TIP = 'Otoč tablet tak, aby mikrofón (malý otvor na okraji) nemieril na činel, alebo v nastaveniach mikrofónu prepni „Zdroj zvuku“.';
+const MIC_SOURCES = [['auto', 'automaticky'], ['voice_performance', 'živé hranie'], ['unprocessed', 'bez úprav'], ['voice_recognition', 'rozpoznávanie reči'], ['camcorder', 'kamera'], ['mic', 'bežný']];
+const micSrcUi = r => { const e = $('#mic-src'); if (!e) return; const pct = r == null ? clipRecent() : r; e.textContent = 'Zdroj: ' + (MIC.src === 'web' ? 'bežný mikrofón WebView' : MIC.src.toUpperCase()) + (pct > 0.001 ? ' · preťaženie ' + (pct * 100).toFixed(1) + ' %' : ''); e.style.color = pct > 0.003 ? '#ff6b5e' : ''; };
 async function rawStart(node) {
   const RM = RAWMIC(), sr = ctx.sampleRate; let off = Infinity, n0 = 0, peak = 0, ok = false;
   // bežný mikrofón vypneme, aby si dva zdroje neprekážali
@@ -850,7 +860,7 @@ async function rawStart(node) {
       if (!ok && n0 > sr && peak > 1e-5) ok = true;
       node.port.postMessage({ pcm: f, t0: e.pos / sr + off }, [f.buffer]);
     });
-    const r = await RM.start({ sr });
+    const r = await RM.start({ sr, source: S.micSource || 'auto' });
     if (r.sr !== sr) return back('iná vzorkovacia frekvencia');
     MIC.src = r.src; micSrcUi(); if (S.micSrcCal && S.micSrcCal !== MIC.src) { S.calibMic = 0; save(); }
     io('Mikrofón počúva surový zvuk (' + (r.src === 'unprocessed' ? 'bez akejkoľvek úpravy' : 'režim rozpoznávania reči, bez zosilnenia') + ').');
@@ -879,7 +889,7 @@ async function recSave(R) {
   const sr = ctx.sampleRate, g = R.g, pad = x => String(x).padStart(2, '0'), d = R.at;
   const name = 'bubny-' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds()) + '-' + g.level.id;
   const meta = { app: 'bubnova-vyprava', ver: document.getElementById('ver').textContent, sr, mic: MIC.src, audioT0: R.ch[0].t, level: g.level.id, bpm: g.level.bpm * (g.slow ? 0.75 : 1),
-    outLat: outLat(), offMic: S.off.mic || 0, win: WIN, notes: g.notes.map(n => [Number(n.t.toFixed(4)), n.lane, n.st === 1 ? 'hit' : 'miss']), hits: g.hits.map(h => ({ t: Number(h.t.toFixed(4)), nt: Number(h.nt.toFixed(4)), lane: h.lane, g: h.g, d: Number((h.d || 0).toFixed(4)) })), ev: R.ev, model: S.nmf, gates: S.gates, xtalk: S.xtalk, drumGate: S.drumGate, micGap: S.micGap,
+    outLat: outLat(), offMic: S.off.mic || 0, micSource: S.micSource || 'auto', clip: CLIP.ns ? Number((CLIP.cl / CLIP.ns).toFixed(5)) : 0, win: WIN, notes: g.notes.map(n => [Number(n.t.toFixed(4)), n.lane, n.st === 1 ? 'hit' : 'miss']), hits: g.hits.map(h => ({ t: Number(h.t.toFixed(4)), nt: Number(h.nt.toFixed(4)), lane: h.lane, g: h.g, d: Number((h.d || 0).toFixed(4)) })), ev: R.ev, model: S.nmf, gates: S.gates, xtalk: S.xtalk, drumGate: S.drumGate, micGap: S.micGap,
     note: 'notes: [čas, bubon] v čase zvukovej karty; zvuk začína v čase audioT0; úder do noty patrí, keď ev.t - outLat - offMic/1000 je do win od noty' };
   const wav = wavBytes(R.ch, sr), js = new TextEncoder().encode(JSON.stringify(meta));
   const RM = RAWMIC();
@@ -892,7 +902,11 @@ async function recSave(R) {
   dl(name + '.wav', wav, 'audio/wav'); dl(name + '.json', js, 'application/json'); io('Nahrávka hry sa stiahla (' + name + '.wav a .json).');
 }
 { const rb = $('#opt-rawmic'), rc = $('#opt-rec');
-  if (RAWMIC()) { rb.hidden = false; rb.setAttribute('aria-pressed', S.rawMic !== false); }
+  const sb = $('#opt-micsrc'), sbTxt = () => sb.textContent = 'Zdroj zvuku: ' + (MIC_SOURCES.find(x => x[0] === (S.micSource || 'auto')) || MIC_SOURCES[0])[1];
+  if (RAWMIC()) { rb.hidden = false; rb.setAttribute('aria-pressed', S.rawMic !== false); sb.hidden = false; sbTxt(); }
+  sb.addEventListener('click', () => { const i = MIC_SOURCES.findIndex(x => x[0] === (S.micSource || 'auto')); S.micSource = MIC_SOURCES[(i + 1) % MIC_SOURCES.length][0]; save(); sbTxt(); CLIP.w = [];
+    io('Zdroj zvuku: ' + MIC_SOURCES.find(x => x[0] === S.micSource)[1] + '. Každý tablet má zdroje inak hlasné; vyber ten, pri ktorom pod mikrofónom nesvieti „preťaženie“. Po zmene kalibruj bubny znova.');
+    if (micTimer) { $('#opt-mic').click(); setTimeout(() => $('#opt-mic').click(), 300); } });
   rb.addEventListener('click', () => { S.rawMic = S.rawMic === false; save(); rb.setAttribute('aria-pressed', S.rawMic !== false);
     io(S.rawMic !== false ? 'Surový mikrofón zapnutý: zvuk bez automatického zosilnenia a potláčania šumu.' : 'Surový mikrofón vypnutý, používa sa bežný mikrofón.');
     if (micTimer) { $('#opt-mic').click(); setTimeout(() => $('#opt-mic').click(), 300); } });
@@ -901,7 +915,7 @@ async function recSave(R) {
     io(S.recOn ? 'Každá zahraná úroveň sa nahrá (zvuk z mikrofónu a noty) a uloží do tabletu do Stiahnuté súbory/BubnovaVyprava. Nikam sa neposiela.' : 'Nahrávanie hry je vypnuté.'); }); }
 // ---------- záloha kalibrácie ----------
 // Kalibrácia je uložená v appke. Pri preinštalovaní by sa stratila, preto sa dá uložiť do súboru a znova načítať.
-const CAL_KEYS = ['lvl', 'lvlId', 'drumV', 'drumOn', 'nmf', 'gates', 'nmfLab', 'xtalk', 'micSens', 'micGap', 'drumGate', 'off', 'calibMic', 'micSrcCal', 'camReg', 'camCols', 'rawMic'];
+const CAL_KEYS = ['micSource', 'lvl', 'lvlId', 'drumV', 'drumOn', 'nmf', 'gates', 'nmfLab', 'xtalk', 'micSens', 'micGap', 'drumGate', 'off', 'calibMic', 'micSrcCal', 'camReg', 'camCols', 'rawMic'];
 async function calSave() {
   const data = { app: 'bubnova-vyprava', kind: 'kalibracia', ver: document.getElementById('ver').textContent, at: new Date().toISOString() };
   CAL_KEYS.forEach(k => { if (S[k] !== undefined) data[k] = S[k]; });
@@ -1263,7 +1277,7 @@ function drumCalRender() {
   const st = DC_STEPS[Math.min(DC.i, DC_STEPS.length - 1)], ph = DC.phase;
   $('#dc-step').textContent = ph === 'intro' ? 'Sprievodca kalibráciou' : ph === 'summary' ? 'Hotovo' : ph === 'test' ? 'Voľný test' : ph === 'verify' ? 'Overenie kamerou' : 'Krok ' + (DC.i + 1) + ' z ' + DC_STEPS.length;
   $('#dc-title').textContent = ph === 'intro' ? 'Naučme appku tvoje bubny' : ph === 'summary' ? 'Kalibrácia dokončená' : ph === 'test' ? 'Udri do ľubovoľného bubna' : ph === 'verify' ? 'Zvuk verzus kamera' : st.title;
-  $('#dc-text').textContent = DC.msg || (ph === 'intro' ? 'Prejdeme ' + DC_STEPS.length + ' krátkych krokov, asi 2 minúty. Appka ti vždy povie, čo máš urobiť: najprv ticho, potom každý bubon zvlášť, potom údery za sebou a nakoniec dva bubny naraz. Daj tablet tam, kde ho pri hraní dobre vidíš, napríklad na stojan pred sebou vo výške očí. Kalibruj presne na tom mieste: appka sa naučí, ako odtiaľ znie každý bubon, a ak je niektorý tichší (napríklad kopák pri tablete blízko činelov), vyrovná to. Ak tablet presunieš, kalibruj znova alebo načítaj kalibráciu uloženú pre to miesto. Ak máš na koncoch paličiek farebnú pásku, zapni kameru: postráži, aby sa appka učila len zo správnych úderov.'
+  $('#dc-text').textContent = DC.msg || (ph === 'intro' ? 'Prejdeme ' + DC_STEPS.length + ' krátkych krokov, asi 2 minúty. Appka ti vždy povie, čo máš urobiť: najprv ticho, potom každý bubon zvlášť, potom údery za sebou a nakoniec dva bubny naraz. Tablet môže byť kdekoľvek, aj tesne pri hi-hate. Kalibruj presne na tom mieste: appka sa naučí, ako odtiaľ znie každý bubon, a ak je niektorý tichší (napríklad kopák pri tablete blízko činelov), vyrovná to. Sleduj ukazovateľ preťaženia mikrofónu: ak svieti načerveno, otoč tablet otvorom mikrofónu od činela alebo prepni zdroj mikrofónu. Ak tablet presunieš, kalibruj znova alebo načítaj kalibráciu uloženú pre to miesto. Ak máš na koncoch paličiek farebnú pásku, zapni kameru: postráži, aby sa appka učila len zo správnych úderov.'
     : ph === 'summary' ? 'Tu je, čo sa appka naučila a čo nastavila. Ak niečo nesedí, spusti kalibráciu znova.'
     : ph === 'verify' ? 'Hraj čokoľvek na rytmičák a hi-hat, aj naraz s kopákom. Kamera sleduje pásky na paličkách a tabuľka ukazuje, ako často sa zvuková metóda zhoduje s tým, čo videla kamera.'
     : ph === 'test' ? 'Udri do bubna a rozpoznaný bubon sa rozsvieti. Keď sa appka pomýli, ťukni na bubon, ktorý si naozaj udrel, a appka sa to naučí.' : st.text);
@@ -1277,6 +1291,7 @@ function drumCalRender() {
 }
 function dcSummary() {
   const r = DC.res, li = [], pct = x => Math.round(x * 100) + ' %';
+  if (DC.ns) { const c = DC.cl / DC.ns; li.push(['Preťaženie mikrofónu', c > 0.003 ? (c * 100).toFixed(1) + ' % vzoriek orezaných. Najsilnejšie údery sú skreslené, rozpoznávanie bude horšie. ' + CLIP_TIP : 'žiadne alebo zanedbateľné']); }
   if (r.quiet) li.push(['Hluk v miestnosti', r.quiet.to !== r.quiet.from ? 'citlivosť znížená z ' + r.quiet.from + ' na ' + r.quiet.to : 'v poriadku, citlivosť ' + r.quiet.to]);
   DRUMS.forEach(d => { if (r[d]) li.push([DRUM_NAME[d][0].toUpperCase() + DRUM_NAME[d].slice(1), 'zvuk naučený z ' + r[d].n + ' úderov' + (r[d].drop ? ' (' + r[d].drop + ' odlišné vynechané)' : '')]); });
   if (r.cam) li.push(['Kamera', 'potvrdila ' + r.cam.ok + ' úderov, ' + r.cam.rej + ' mimo bubna alebo naraz vyhodila' + (r.cam.unsure ? ', pri ' + r.cam.unsure + ' paličku nevidela' : '')]);
