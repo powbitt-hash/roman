@@ -598,7 +598,7 @@ function finish() {
   else if (mean > 25) tip = 'Zaostávaš, v priemere o ' + Math.round(mean) + ' ms. Ak sa to opakuje pri každom leveli, spusti kalibráciu.';
   else tip = 'Tempo držíš presne, v priemere na ' + Math.abs(Math.round(mean)) + ' ms od metronómu.';
   if (S.mic && drumReady()) { const off = DRUMS.filter(d => { const m = lvlMed(d); return m != null && S.lvl[d].length >= 10 && (m < 0.45 || m > 2.2); });
-    if (off.length) tip += ' Mikrofón počuje ' + off.map(d => DRUM_NAME[d] + (lvlMed(d) < 1 ? ' oveľa tichšie' : ' oveľa hlasnejšie')).join(' a ') + ' než pri kalibrácii. Appka sa tomu prispôsobuje, ale ak si tablet presunul, spusti radšej „Kalibrovať bubny“ znova.'; }
+    if (off.length) tip += ' Mikrofón počuje ' + off.map(d => DRUM_NAME[d] + (lvlMed(d) < 1 ? ' oveľa tichšie' : ' oveľa hlasnejšie')).join(' a ') + ' než pri kalibrácii. Appka sa tomu prispôsobuje. Ak si však tablet presunul, spusti radšej „Kalibrovať bubny“ znova na novom mieste.'; }
   save();
   const adj = g.dts.length >= 6 && Math.abs(mean) > 12 ? { kind: lastKind, ms: Math.round(mean / 5) * 5 } : null;
   result(lv, { stars, acc, score: g.score, combo: g.maxCombo, miss: g.miss, tip, xp, goalHit, adj });
@@ -1263,7 +1263,7 @@ function drumCalRender() {
   const st = DC_STEPS[Math.min(DC.i, DC_STEPS.length - 1)], ph = DC.phase;
   $('#dc-step').textContent = ph === 'intro' ? 'Sprievodca kalibráciou' : ph === 'summary' ? 'Hotovo' : ph === 'test' ? 'Voľný test' : ph === 'verify' ? 'Overenie kamerou' : 'Krok ' + (DC.i + 1) + ' z ' + DC_STEPS.length;
   $('#dc-title').textContent = ph === 'intro' ? 'Naučme appku tvoje bubny' : ph === 'summary' ? 'Kalibrácia dokončená' : ph === 'test' ? 'Udri do ľubovoľného bubna' : ph === 'verify' ? 'Zvuk verzus kamera' : st.title;
-  $('#dc-text').textContent = DC.msg || (ph === 'intro' ? 'Prejdeme ' + DC_STEPS.length + ' krátkych krokov, asi 2 minúty. Appka ti vždy povie, čo máš urobiť: najprv ticho, potom každý bubon zvlášť, potom údery za sebou a nakoniec dva bubny naraz. Polož tablet asi meter pred súpravu, medzi rytmičák a kopák, nie tesne k činelom: činely by inak prehlušili kopák. Tablet maj pri hre vždy na tom istom mieste ako pri kalibrácii. Ak ho presunieš, kalibruj znova (alebo načítaj kalibráciu uloženú pre to miesto). Ak máš na koncoch paličiek farebnú pásku, zapni kameru: postráži, aby sa appka učila len zo správnych úderov.'
+  $('#dc-text').textContent = DC.msg || (ph === 'intro' ? 'Prejdeme ' + DC_STEPS.length + ' krátkych krokov, asi 2 minúty. Appka ti vždy povie, čo máš urobiť: najprv ticho, potom každý bubon zvlášť, potom údery za sebou a nakoniec dva bubny naraz. Daj tablet tam, kde ho pri hraní dobre vidíš, napríklad na stojan pred sebou vo výške očí. Kalibruj presne na tom mieste: appka sa naučí, ako odtiaľ znie každý bubon, a ak je niektorý tichší (napríklad kopák pri tablete blízko činelov), vyrovná to. Ak tablet presunieš, kalibruj znova alebo načítaj kalibráciu uloženú pre to miesto. Ak máš na koncoch paličiek farebnú pásku, zapni kameru: postráži, aby sa appka učila len zo správnych úderov.'
     : ph === 'summary' ? 'Tu je, čo sa appka naučila a čo nastavila. Ak niečo nesedí, spusti kalibráciu znova.'
     : ph === 'verify' ? 'Hraj čokoľvek na rytmičák a hi-hat, aj naraz s kopákom. Kamera sleduje pásky na paličkách a tabuľka ukazuje, ako často sa zvuková metóda zhoduje s tým, čo videla kamera.'
     : ph === 'test' ? 'Udri do bubna a rozpoznaný bubon sa rozsvieti. Keď sa appka pomýli, ťukni na bubon, ktorý si naozaj udrel, a appka sa to naučí.' : st.text);
