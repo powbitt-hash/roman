@@ -165,7 +165,7 @@ tr:last-child td{border-bottom:0}
           <button class="chip" id="opt-rawmic" aria-pressed="true" hidden>Surový mikrofón (Android)</button>
           <button class="chip" id="opt-rec" aria-pressed="false">Nahrávať hru na meranie</button>
         </div>
-        <div class="bar" id="mic-ui" hidden style="align-items:center"><span class="label">Hlasitosť</span><div class="prog" id="mic-meter"><div></div></div><label class="label" style="display:flex;align-items:center;gap:8px">Citlivosť <input id="mic-sens" type="range" min="1" max="10" step="1"></label><button class="chip" id="drum-calib">Kalibrovať bubny</button><button class="chip" id="drum-test">Vyskúšať rozpoznanie</button><button class="chip" id="mic-calib">Kalibrovať oneskorenie</button></div>
+        <div class="bar" id="mic-ui" hidden style="align-items:center"><span class="label">Hlasitosť</span><div class="prog" id="mic-meter"><div></div></div><label class="label" style="display:flex;align-items:center;gap:8px">Citlivosť <input id="mic-sens" type="range" min="1" max="10" step="1"></label><button class="chip" id="drum-calib">Kalibrovať bubny</button><button class="chip" id="drum-test">Vyskúšať rozpoznanie</button><button class="chip" id="mic-calib">Kalibrovať oneskorenie</button><span class="label" id="mic-src"></span></div>
         <p class="muted" id="io-status">Bez pripojenia sa hrá klávesmi J, F a medzerníkom alebo ťukaním na pady.</p>
         <p class="muted">Po kalibrácii bubnov mikrofón rozozná kopák, rytmičák a hi-hat. Počuje aj reproduktor, preto hraj so slúchadlami. „Nahrávať hru na meranie“ uloží zvuk každej zahranej úrovne do tabletu spolu s notami, aby sa dalo zmerať, ako presne appka bubny rozpoznáva.</p>
       </details>
@@ -789,7 +789,7 @@ $('#opt-mic').addEventListener('click', async () => {
       if (G && G.level.calib) hit('any', 'mic', e.t); else lanes.forEach(l => hit(l, 'mic', e.t));
       if (!G) io('Mikrofón počúva. Zachytené údery: ' + hits + ' (naposledy ' + lanes.map(l => DRUM_NAME[l]).join(' + ') + ').');
     };
-    $('#mic-ui').hidden = false;
+    $('#mic-ui').hidden = false; micSrcUi();
     scopeStart();
     let node = null;
     if (ctx.audioWorklet && window.AudioWorkletNode) {
@@ -826,12 +826,13 @@ if (S.mic) addEventListener('pointerdown', function again() { removeEventListene
 // a posielame ho do toho istého spracovania. Keď to tablet nevie, zostane bežný mikrofón.
 const RAWMIC = () => window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.RawMic;
 const MIC = { src: 'web', h: null, on: false };
+const micSrcUi = () => { const e = $('#mic-src'); if (e) e.textContent = 'Zdroj: ' + (MIC.src === 'unprocessed' ? 'surový (UNPROCESSED)' : MIC.src === 'voice_recognition' ? 'surový (VOICE_RECOGNITION)' : 'bežný mikrofón WebView'); };
 async function rawStart(node) {
   const RM = RAWMIC(), sr = ctx.sampleRate; let off = Infinity, n0 = 0, peak = 0, ok = false;
   // bežný mikrofón vypneme, aby si dva zdroje neprekážali
   if (micSrc) { try { micSrc.disconnect(); } catch (e) {} micSrc.mediaStream.getTracks().forEach(t => t.stop()); }
   node.port.postMessage({ ext: true }); MIC.on = true;
-  const back = async why => { if (!MIC.on || micNode !== node) return; rawStop(); MIC.src = 'web';
+  const back = async why => { if (!MIC.on || micNode !== node) return; rawStop(); MIC.src = 'web'; micSrcUi();
     try { const st = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
       micSrc = ctx.createMediaStreamSource(st); micSrc.connect(node); } catch (e) {}
     node.port.postMessage({ ext: false }); io('Surový mikrofón nefunguje (' + why + '), používam bežný mikrofón.'); };
@@ -846,7 +847,7 @@ async function rawStart(node) {
     });
     const r = await RM.start({ sr });
     if (r.sr !== sr) return back('iná vzorkovacia frekvencia');
-    MIC.src = r.src; if (S.micSrcCal && S.micSrcCal !== MIC.src) { S.calibMic = 0; save(); }
+    MIC.src = r.src; micSrcUi(); if (S.micSrcCal && S.micSrcCal !== MIC.src) { S.calibMic = 0; save(); }
     io('Mikrofón počúva surový zvuk (' + (r.src === 'unprocessed' ? 'bez akejkoľvek úpravy' : 'režim rozpoznávania reči, bez zosilnenia') + ').');
     setTimeout(() => { if (!ok) back('žiadny zvuk'); }, 1800);
   } catch (e) { back(e && e.message || 'chyba'); }
@@ -873,7 +874,7 @@ async function recSave(R) {
   const sr = ctx.sampleRate, g = R.g, pad = x => String(x).padStart(2, '0'), d = R.at;
   const name = 'bubny-' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds()) + '-' + g.level.id;
   const meta = { app: 'bubnova-vyprava', ver: document.getElementById('ver').textContent, sr, mic: MIC.src, audioT0: R.ch[0].t, level: g.level.id, bpm: g.level.bpm * (g.slow ? 0.75 : 1),
-    outLat: outLat(), offMic: S.off.mic || 0, win: WIN, notes: g.notes.map(n => [Number(n.t.toFixed(4)), n.lane]), ev: R.ev, model: S.nmf, gates: S.gates, xtalk: S.xtalk, drumGate: S.drumGate, micGap: S.micGap,
+    outLat: outLat(), offMic: S.off.mic || 0, win: WIN, notes: g.notes.map(n => [Number(n.t.toFixed(4)), n.lane, n.st === 1 ? 'hit' : 'miss']), hits: g.hits.map(h => ({ t: Number(h.t.toFixed(4)), nt: Number(h.nt.toFixed(4)), lane: h.lane, g: h.g, d: Number((h.d || 0).toFixed(4)) })), ev: R.ev, model: S.nmf, gates: S.gates, xtalk: S.xtalk, drumGate: S.drumGate, micGap: S.micGap,
     note: 'notes: [čas, bubon] v čase zvukovej karty; zvuk začína v čase audioT0; úder do noty patrí, keď ev.t - outLat - offMic/1000 je do win od noty' };
   const wav = wavBytes(R.ch, sr), js = new TextEncoder().encode(JSON.stringify(meta));
   const RM = RAWMIC();
