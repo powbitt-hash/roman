@@ -100,6 +100,11 @@ canvas{display:block;width:100%;height:clamp(230px,40vh,340px);background:var(--
 .result{background:var(--panel);border-radius:var(--r);padding:26px 22px;display:flex;flex-direction:column;gap:16px;align-items:flex-start}
 .bigstars{font-size:3rem;letter-spacing:8px;line-height:1;color:var(--line)}
 .bigstars i{font-style:normal;color:var(--brass)}
+.emap{width:100%;display:flex;flex-direction:column;gap:10px}
+.emap svg{width:100%;height:auto;display:block}
+.emap .sum{display:flex;flex-wrap:wrap;gap:6px 14px;font-weight:700;font-size:.9rem}
+.emap .sum span{display:inline-flex;align-items:center;gap:6px}
+.emap .sum i{width:12px;height:12px;border-radius:50%;display:inline-block}
 .grid4{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:14px;width:100%}
 .grid4 b{display:block;font-family:var(--display);font-size:1.6rem;line-height:1.1;font-variant-numeric:tabular-nums}
 .btn{padding:11px 20px;border-radius:999px;font-weight:800;background:var(--brass);color:var(--stage)}
@@ -298,6 +303,7 @@ tr:last-child td{border-bottom:0}
         <div><b id="r-combo">0</b><span class="label">najdlhšia séria</span></div>
         <div><b id="r-miss">0</b><span class="label">vynechané</span></div>
       </div>
+      <div id="r-map" class="emap" hidden></div>
       <p id="r-tip" style="max-width:65ch"></p>
       <div class="bar" id="r-adj-bar" hidden><button class="chip" id="r-adj"></button></div>
       <div class="bar">
@@ -604,7 +610,7 @@ function finish() {
     if (off.length) tip += ' Mikrofón počuje ' + off.map(d => DRUM_NAME[d] + (lvlMed(d) < 1 ? ' oveľa tichšie' : ' oveľa hlasnejšie')).join(' a ') + ' než pri kalibrácii. Appka sa tomu prispôsobuje. Ak si však tablet presunul, spusti radšej „Kalibrovať bubny“ znova na novom mieste.'; }
   save();
   const adj = g.dts.length >= 6 && Math.abs(mean) > 12 ? { kind: lastKind, ms: Math.round(mean / 5) * 5 } : null;
-  result(lv, { stars, acc, score: g.score, combo: g.maxCombo, miss: g.miss, tip, xp, goalHit, adj });
+  result(lv, { stars, acc, score: g.score, combo: g.maxCombo, miss: g.miss, tip, xp, goalHit, adj, map: errMap(g) });
 }
 
 // ---------- obrazovky ----------
@@ -629,9 +635,59 @@ function result(lv, r) {
     $('#r-xp').textContent = '+' + r.xp + ' XP' + (r.goalHit ? ' · denný cieľ splnený!' : '');
     $('#r-next').hidden = !(next && unlocked(idx + 1));
   }
+  $('#r-map').hidden = !r.map; $('#r-map').innerHTML = r.map || '';
   ADJ = r.adj || null; $('#r-adj-bar').hidden = !ADJ;
   if (ADJ) $('#r-adj').textContent = (ADJ.ms > 0 ? 'Hráš neskoro o ' : 'Hráš skoro o ') + Math.abs(ADJ.ms) + ' ms: upraviť oneskorenie (' + KIND_NAME[ADJ.kind] + ')';
   show('result'); renderHome();
+}
+// Mapa chýb po cvičení: každý riadok sú dva takty, pre každý bubon jedna linka.
+// Krúžok je miesto noty, bodka je úder: zelená presne, žltá skoro/neskoro (s ms), červený krížik vynechané, sivý kosoštvorec navyše.
+function errMap(g) {
+  if (!g || !g.notes.length) return '';
+  const C = { ok: '#9be58f', off: '#f2b63c', miss: '#ff6b5e', extra: '#aca6d8' }, LN = { h: 'Hi-hat', s: 'Rytmičák', k: 'Kopák' };
+  const ROWB = 2, steps = ROWB * 16, rowDur = steps * g.sps, rows = Math.ceil(g.total / ROWB);
+  const W = 640, X0 = 78, X1 = W - 14, LH = 24, RH = LH * 3 + 26, H = rows * RH + 4;
+  const xOf = t => X0 + (((t - g.T) % rowDur + rowDur) % rowDur) / rowDur * (X1 - X0), rowOf = t => Math.max(0, Math.min(rows - 1, Math.floor((t - g.T) / rowDur + 1e-6)));
+  const yOf = (r, l) => r * RH + 20 + LANES.indexOf(l) * LH + LH / 2;
+  const cnt = { ok: 0, early: 0, late: 0, miss: 0, extra: 0, wrong: 0 }, perLane = { h: 0, s: 0, k: 0 };
+  const hits = g.hits.filter(h => h.g !== 'miss'), extras = g.hits.filter(h => h.g === 'miss'), missed = g.notes.filter(n => n.st === 2);
+  // vynechaná nota + úder navyše na inom bubne v tom istom čase = zahraný iný bubon
+  const wrong = new Map();
+  for (const e of extras) { const n = missed.find(n => !wrong.has(n) && n.lane !== e.lane && Math.abs(n.t - e.t) <= WIN); if (n) wrong.set(n, e); }
+  const wrongE = new Set(wrong.values());
+  let o = '';
+  for (let r = 0; r < rows; r++) {
+    const y0 = r * RH;
+    o += '<text x="4" y="' + (y0 + 12) + '" fill="#aca6d8" font-size="11" font-weight="700">TAKT ' + (r * ROWB + 1) + (ROWB > 1 && r * ROWB + 2 <= g.total ? '–' + (r * ROWB + 2) : '') + '</text>';
+    LANES.forEach(l => { const y = yOf(r, l); o += '<text x="4" y="' + (y + 4) + '" fill="#f4f0ff" font-size="12" font-weight="700">' + LN[l] + '</text><line x1="' + X0 + '" x2="' + X1 + '" y1="' + y + '" y2="' + y + '" stroke="#3a3470" stroke-width="1"/>'; });
+    for (let st = 0; st <= steps; st += 4) { const x = X0 + st / steps * (X1 - X0); o += '<line x1="' + x + '" x2="' + x + '" y1="' + (y0 + 18) + '" y2="' + (y0 + 18 + LH * 3) + '" stroke="' + (st % 16 ? '#2e2960' : '#5a5299') + '" stroke-width="' + (st % 16 ? 1 : 2) + '"/>'; }
+  }
+  for (const n of g.notes) {
+    const r = rowOf(n.t), x = xOf(n.t), y = yOf(r, n.lane);
+    if (n.st === 2) { cnt[wrong.has(n) ? 'wrong' : 'miss']++; perLane[n.lane]++;
+      o += '<circle cx="' + x + '" cy="' + y + '" r="8" fill="none" stroke="' + C.miss + '" stroke-width="2.5"/><path d="M' + (x - 4) + ' ' + (y - 4) + 'L' + (x + 4) + ' ' + (y + 4) + 'M' + (x + 4) + ' ' + (y - 4) + 'L' + (x - 4) + ' ' + (y + 4) + '" stroke="' + C.miss + '" stroke-width="2.5"/>';
+      const e = wrong.get(n); if (e) { const ye = yOf(r, e.lane), xe = x + (e.t - n.t) / rowDur * (X1 - X0); o += '<line x1="' + x + '" y1="' + y + '" x2="' + xe + '" y2="' + ye + '" stroke="' + C.miss + '" stroke-width="1.5" stroke-dasharray="3 3"/><path d="M' + xe + ' ' + (ye - 6) + 'L' + (xe + 6) + ' ' + ye + 'L' + xe + ' ' + (ye + 6) + 'L' + (xe - 6) + ' ' + ye + 'Z" fill="' + C.miss + '"/>'; }
+    } else o += '<circle cx="' + x + '" cy="' + y + '" r="8" fill="none" stroke="#5a5299" stroke-width="1.5"/>';
+  }
+  for (const h of hits) {
+    const r = rowOf(h.nt), xn = xOf(h.nt), y = yOf(r, h.lane), a = Math.abs(h.d), ok = a <= PERFECT;
+    const sw = (X1 - X0) / steps, x = xn + Math.max(-0.8 * sw, Math.min(0.8 * sw, h.d / rowDur * (X1 - X0) * 2));
+    if (ok) { cnt.ok++; o += '<circle cx="' + xn + '" cy="' + y + '" r="6" fill="' + C.ok + '"/>'; continue; }
+    cnt[h.d < 0 ? 'early' : 'late']++; perLane[h.lane]++;
+    o += '<line x1="' + xn + '" y1="' + y + '" x2="' + x + '" y2="' + y + '" stroke="' + C.off + '" stroke-width="2"/><circle cx="' + x + '" cy="' + y + '" r="6" fill="' + C.off + '"/>' +
+      '<text x="' + x + '" y="' + (y - 9) + '" fill="' + C.off + '" font-size="10" font-weight="700" text-anchor="middle">' + (h.d < 0 ? '−' : '+') + Math.round(a * 1000) + '</text>';
+  }
+  for (const e of extras) {
+    if (wrongE.has(e)) continue;
+    const r = rowOf(e.t), x = xOf(e.t), y = yOf(r, e.lane), col = C.extra;
+    cnt.extra++; perLane[e.lane]++;
+    o += '<path d="M' + x + ' ' + (y - 6) + 'L' + (x + 6) + ' ' + y + 'L' + x + ' ' + (y + 6) + 'L' + (x - 6) + ' ' + y + 'Z" fill="' + col + '"/>';
+  }
+  const worst = LANES.filter(l => perLane[l]).sort((a, b) => perLane[b] - perLane[a])[0];
+  const it = (c, t, n) => n ? '<span><i style="background:' + c + '"></i>' + t + ' ' + n + '</span>' : '';
+  return '<p class="label">Kde boli chyby</p><svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Mapa úderov a chýb">' + o + '</svg>' +
+    '<div class="sum">' + it(C.ok, 'Presne', cnt.ok) + it(C.off, 'Skoro', cnt.early) + it(C.off, 'Neskoro', cnt.late) + it(C.miss, 'Vynechané', cnt.miss) + it(C.miss, 'Iný bubon', cnt.wrong) + it(C.extra, 'Navyše', cnt.extra) + '</div>' +
+    '<p class="muted" style="margin:0">Krúžok je nota, bodka tvoj úder. Číslo pri žltej bodke hovorí, o koľko milisekúnd skôr (−) alebo neskôr (+) si udrel. Červený krížik je vynechaná nota, kosoštvorec úder navyše. Prerušovaná čiara spája notu s bubnom, ktorý si zahral namiesto nej.' + (worst ? ' Najviac chýb: ' + DRUM_NAME[worst] + '.' : ' Bez jedinej chyby!') + '</p>';
 }
 const unlocked = i => i === 0 || (S.stars[ALL[i - 1].id] || 0) >= 1;
 function renderHome() {
@@ -913,6 +969,8 @@ async function recSave(R) {
   rb.addEventListener('click', () => { S.rawMic = S.rawMic === false; save(); rb.setAttribute('aria-pressed', S.rawMic !== false);
     io(S.rawMic !== false ? 'Surový mikrofón zapnutý: zvuk bez automatického zosilnenia a potláčania šumu.' : 'Surový mikrofón vypnutý, používa sa bežný mikrofón.');
     if (micTimer) { $('#opt-mic').click(); setTimeout(() => $('#opt-mic').click(), 300); } });
+  // fáza testovania: nahrávanie hry je zapnuté predvolene (raz sa zapne aj tomu, kto ho mal vypnuté)
+  if (!S.recDef) { S.recDef = 1; S.recOn = true; save(); }
   rc.setAttribute('aria-pressed', !!S.recOn);
   rc.addEventListener('click', () => { S.recOn = !S.recOn; save(); rc.setAttribute('aria-pressed', S.recOn);
     io(S.recOn ? 'Každá zahraná úroveň sa nahrá (zvuk z mikrofónu a noty) a uloží do tabletu do Stiahnuté súbory/BubnovaVyprava. Nikam sa neposiela.' : 'Nahrávanie hry je vypnuté.'); }); }
@@ -986,7 +1044,9 @@ const LVL_N = 16;
 const lvlMed = d => { const v = S.lvl && S.nmf && S.lvlId === S.nmf.id && S.lvl[d]; if (!v || v.length < 6) return null; const q = [...v].sort((a, b) => a - b); return q[q.length >> 1]; };
 const lvlF = d => { const m = lvlMed(d); return m == null ? 1 : Math.min(1.5, Math.max(0.5, m)); };
 function lvlPush(d, v) { if (!S.nmf) return; if (S.lvlId !== S.nmf.id) { S.lvl = { k: [], s: [], h: [] }; S.lvlId = S.nmf.id; } const a = S.lvl[d]; a.push(Number(v.toFixed(3))); if (a.length > LVL_N) a.shift(); }
-const lanesOf = (c, near) => DRUMS.filter(d => gScore(c, d, gateRule(d)) >= gateOf(d) * lvlF(d) * (near && near(d) ? NEAR_F[d] : 1));
+// Doznievajúci hi-hat (alebo rytmičák) bez nového úderu niekedy vytvorí slabý „kopák“: taký kopák neberieme.
+const ringK = c => (c.k || 0) < 0.6 * Math.max(c.h_ || 0, c.s_ || 0) && (c.h || 0) < 0.15 && (c.s || 0) < 0.15;
+const lanesOf = (c, near) => DRUMS.filter(d => gScore(c, d, gateRule(d)) >= gateOf(d) * lvlF(d) * (near && near(d) ? NEAR_F[d] : 1) && !(d === 'k' && ringK(c)));
 // šablóna úderu: nárast spektra v prvých ~20 ms oproti oknu pred úderom
 function hitShape(spec) { const K = spec[0].length, a = new Array(K).fill(0);
   for (let i = 1; i <= 4 && i < spec.length; i++) for (let k = 0; k < K; k++) a[k] += Math.max(0, spec[i][k] - spec[0][k]); return unit(a); }
@@ -1679,6 +1739,6 @@ document.addEventListener('visibilitychange', () => { if (document.hidden && G &
 
 if ($('#ver').textContent.includes('__')) $('#ver').hidden = true; // verziu dopĺňa len zostavenie aplikácie
 renderHome();
-window.__bubny = { get G() { return G; }, hit, start, ALL, get ctx() { return ctx; }, get DC() { return DC; }, drumCalHit, get S() { return S; }, nmfSolve, buildModel, lanesOf, CAM, camAt, camReg };
+window.__bubny = { get G() { return G; }, hit, start, finish, errMap, ALL, get ctx() { return ctx; }, get DC() { return DC; }, drumCalHit, get S() { return S; }, nmfSolve, buildModel, lanesOf, CAM, camAt, camReg };
 })();
 </script>
