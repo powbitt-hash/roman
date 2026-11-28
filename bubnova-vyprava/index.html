@@ -597,6 +597,9 @@ function finish() {
   else if (mean < -25) tip = 'Ponáhľaš sa, v priemere o ' + Math.round(-mean) + ' ms. Počkaj si na kliknutie metronómu.';
   else if (mean > 25) tip = 'Zaostávaš, v priemere o ' + Math.round(mean) + ' ms. Ak sa to opakuje pri každom leveli, spusti kalibráciu.';
   else tip = 'Tempo držíš presne, v priemere na ' + Math.abs(Math.round(mean)) + ' ms od metronómu.';
+  if (S.mic && drumReady()) { const off = DRUMS.filter(d => { const m = lvlMed(d); return m != null && S.lvl[d].length >= 10 && (m < 0.45 || m > 2.2); });
+    if (off.length) tip += ' Mikrofón počuje ' + off.map(d => DRUM_NAME[d] + (lvlMed(d) < 1 ? ' oveľa tichšie' : ' oveľa hlasnejšie')).join(' a ') + ' než pri kalibrácii. Appka sa tomu prispôsobuje, ale ak si tablet presunul, spusti radšej „Kalibrovať bubny“ znova.'; }
+  save();
   const adj = g.dts.length >= 6 && Math.abs(mean) > 12 ? { kind: lastKind, ms: Math.round(mean / 5) * 5 } : null;
   result(lv, { stars, acc, score: g.score, combo: g.maxCombo, miss: g.miss, tip, xp, goalHit, adj });
 }
@@ -784,7 +787,7 @@ $('#opt-mic').addEventListener('click', async () => {
       // hra vie, čo sa má zahrať: pri očakávanej note stačí slabší úder, presluch mimo nôt sa ignoruje
       const near = play ? d => { const th = e.t - outLat() - (S.off.mic || 0) / 1000; return G.notes.some(n => !n.st && n.lane === d && Math.abs(n.t - th) <= WIN); } : null;
       let lanes = lanesOf(e.c, near);
-      if (play) lanes = lanes.filter(d => near(d) || gScore(e.c, d, gateRule(d)) >= 2 * gateOf(d));
+      if (play) { lanes = lanes.filter(d => near(d) || gScore(e.c, d, gateRule(d)) >= 2 * gateOf(d) * Math.max(1, lvlF(d))); DRUMS.forEach(d => { if (near(d) && (e.c[d] || 0) > 0.05) lvlPush(d, e.c[d]); }); }
       logHit(e.c, lanes, G ? 'hra' : 'voľne'); if (REC) REC.ev[REC.ev.length - 1].l = labOf(lanes);
       if (!lanes.length) { scopeHit(e.t, [], true); return; }
       hits++; micLane = scopeHit(e.t, ['all'].concat(lanes)); flashMeter();
@@ -898,7 +901,7 @@ async function recSave(R) {
     io(S.recOn ? 'Každá zahraná úroveň sa nahrá (zvuk z mikrofónu a noty) a uloží do tabletu do Stiahnuté súbory/BubnovaVyprava. Nikam sa neposiela.' : 'Nahrávanie hry je vypnuté.'); }); }
 // ---------- záloha kalibrácie ----------
 // Kalibrácia je uložená v appke. Pri preinštalovaní by sa stratila, preto sa dá uložiť do súboru a znova načítať.
-const CAL_KEYS = ['drumV', 'drumOn', 'nmf', 'gates', 'nmfLab', 'xtalk', 'micSens', 'micGap', 'drumGate', 'off', 'calibMic', 'micSrcCal', 'camReg', 'camCols', 'rawMic'];
+const CAL_KEYS = ['lvl', 'lvlId', 'drumV', 'drumOn', 'nmf', 'gates', 'nmfLab', 'xtalk', 'micSens', 'micGap', 'drumGate', 'off', 'calibMic', 'micSrcCal', 'camReg', 'camCols', 'rawMic'];
 async function calSave() {
   const data = { app: 'bubnova-vyprava', kind: 'kalibracia', ver: document.getElementById('ver').textContent, at: new Date().toISOString() };
   CAL_KEYS.forEach(k => { if (S[k] !== undefined) data[k] = S[k]; });
@@ -960,7 +963,13 @@ const gScore = (c, d, rule) => cVal(c, d, rule.w) - DRUMS.reduce((a, e) => a + (
 // pri očakávanej note stačí slabší úder; kopák (pedál) býva v hre tichší než pri kalibrácii, preto ešte menej
 // (podľa nahrávok z tabletu: kopák mal pri minutých notách rovnako silný hlboký tón ako pri trafených)
 const NEAR_F = { k: 0.4, s: 0.6, h: 0.6 };
-const lanesOf = (c, near) => DRUMS.filter(d => gScore(c, d, gateRule(d)) >= gateOf(d) * (near && near(d) ? NEAR_F[d] : 1));
+// Prispôsobenie hlasitosti: ak bubon v hre znie trvalo tichšie alebo hlasnejšie než pri kalibrácii (napr. tablet je inde
+// alebo sa hrá jemnejšie), prah sa posunie podľa mediánu posledných 16 úderov pri očakávaných notách (0,5× až 1,5×).
+const LVL_N = 16;
+const lvlMed = d => { const v = S.lvl && S.nmf && S.lvlId === S.nmf.id && S.lvl[d]; if (!v || v.length < 6) return null; const q = [...v].sort((a, b) => a - b); return q[q.length >> 1]; };
+const lvlF = d => { const m = lvlMed(d); return m == null ? 1 : Math.min(1.5, Math.max(0.5, m)); };
+function lvlPush(d, v) { if (!S.nmf) return; if (S.lvlId !== S.nmf.id) { S.lvl = { k: [], s: [], h: [] }; S.lvlId = S.nmf.id; } const a = S.lvl[d]; a.push(Number(v.toFixed(3))); if (a.length > LVL_N) a.shift(); }
+const lanesOf = (c, near) => DRUMS.filter(d => gScore(c, d, gateRule(d)) >= gateOf(d) * lvlF(d) * (near && near(d) ? NEAR_F[d] : 1));
 // šablóna úderu: nárast spektra v prvých ~20 ms oproti oknu pred úderom
 function hitShape(spec) { const K = spec[0].length, a = new Array(K).fill(0);
   for (let i = 1; i <= 4 && i < spec.length; i++) for (let k = 0; k < K; k++) a[k] += Math.max(0, spec[i][k] - spec[0][k]); return unit(a); }
@@ -1254,7 +1263,7 @@ function drumCalRender() {
   const st = DC_STEPS[Math.min(DC.i, DC_STEPS.length - 1)], ph = DC.phase;
   $('#dc-step').textContent = ph === 'intro' ? 'Sprievodca kalibráciou' : ph === 'summary' ? 'Hotovo' : ph === 'test' ? 'Voľný test' : ph === 'verify' ? 'Overenie kamerou' : 'Krok ' + (DC.i + 1) + ' z ' + DC_STEPS.length;
   $('#dc-title').textContent = ph === 'intro' ? 'Naučme appku tvoje bubny' : ph === 'summary' ? 'Kalibrácia dokončená' : ph === 'test' ? 'Udri do ľubovoľného bubna' : ph === 'verify' ? 'Zvuk verzus kamera' : st.title;
-  $('#dc-text').textContent = DC.msg || (ph === 'intro' ? 'Prejdeme ' + DC_STEPS.length + ' krátkych krokov, asi 2 minúty. Appka ti vždy povie, čo máš urobiť: najprv ticho, potom každý bubon zvlášť, potom údery za sebou a nakoniec dva bubny naraz. Polož tablet tak, aby mikrofón mieril k bubnom, a vezmi paličky. Ak máš na koncoch paličiek farebnú pásku, zapni kameru: postráži, aby sa appka učila len zo správnych úderov.'
+  $('#dc-text').textContent = DC.msg || (ph === 'intro' ? 'Prejdeme ' + DC_STEPS.length + ' krátkych krokov, asi 2 minúty. Appka ti vždy povie, čo máš urobiť: najprv ticho, potom každý bubon zvlášť, potom údery za sebou a nakoniec dva bubny naraz. Polož tablet asi meter pred súpravu, medzi rytmičák a kopák, nie tesne k činelom: činely by inak prehlušili kopák. Tablet maj pri hre vždy na tom istom mieste ako pri kalibrácii. Ak ho presunieš, kalibruj znova (alebo načítaj kalibráciu uloženú pre to miesto). Ak máš na koncoch paličiek farebnú pásku, zapni kameru: postráži, aby sa appka učila len zo správnych úderov.'
     : ph === 'summary' ? 'Tu je, čo sa appka naučila a čo nastavila. Ak niečo nesedí, spusti kalibráciu znova.'
     : ph === 'verify' ? 'Hraj čokoľvek na rytmičák a hi-hat, aj naraz s kopákom. Kamera sleduje pásky na paličkách a tabuľka ukazuje, ako často sa zvuková metóda zhoduje s tým, čo videla kamera.'
     : ph === 'test' ? 'Udri do bubna a rozpoznaný bubon sa rozsvieti. Keď sa appka pomýli, ťukni na bubon, ktorý si naozaj udrel, a appka sa to naučí.' : st.text);
