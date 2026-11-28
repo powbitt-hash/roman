@@ -33,6 +33,25 @@ jobs:
         run: sed -i 's#<uses-permission android:name="android.permission.INTERNET" />#&\n    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-feature android:name="android.hardware.camera" android:required="false" />#' android/app/src/main/AndroidManifest.xml
       - name: Kontrola povolenia mikrofonu
         run: grep -q 'android.permission.RECORD_AUDIO' android/app/src/main/AndroidManifest.xml && grep -q 'android.permission.CAMERA' android/app/src/main/AndroidManifest.xml
+      - name: Surovy mikrofon (nativny plugin)
+        run: |
+          D=android/app/src/main/java/sk/bubnovavyprava/app
+          cp native/RawMicPlugin.java "$D/"
+          cat > "$D/MainActivity.java" <<'EOF'
+          package sk.bubnovavyprava.app;
+
+          import android.os.Bundle;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  registerPlugin(RawMicPlugin.class);
+                  super.onCreate(savedInstanceState);
+              }
+          }
+          EOF
+          grep -q registerPlugin "$D/MainActivity.java"
       - run: npx cap sync android
       - name: Zostavenie APK
         working-directory: bubnova-vyprava/android
