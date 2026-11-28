@@ -335,6 +335,40 @@ function pat(str) { let h = '', sn = '', k = '', st = '', ac = '';
   return [h, sn, k, st, ac]; }
 // Takt zo zoznamu krokov: 'krok:ruka' a '!' za rukou = akcent (pre zložitejšie rytmy so šestnástinami aj triolami).
 function seq(n, spec) { const a = new Array(n).fill('.'); spec.split(/\s+/).filter(Boolean).forEach(x => { const [i, hd] = x.split(':'); a[+i] = hd.endsWith('!') ? hd[0].toUpperCase() : hd[0].toLowerCase(); }); return pat(a.join('')); }
+// Takt bicej súpravy zadaný v šestnástinách (dovolené sú aj zlomky pre trioly); vnútri 12 krokov na dobu.
+// n16 = dĺžka taktu v šestnástinách (16 = 4/4, 14 = 7/8). p = { h, s, k, a (akcenty), st (prstoklad: [pozícia, 'R'] ) }
+function kit(n16, p) { const n = Math.round(n16 * 3), mk = () => new Array(n).fill('.'), at = x => Math.round(x * 3);
+  const h = mk(), sn = mk(), k = mk(), st = mk(), ac = mk();
+  (p.h || []).forEach(x => h[at(x)] = 'x'); (p.s || []).forEach(x => sn[at(x)] = 'x'); (p.k || []).forEach(x => k[at(x)] = 'x'); (p.a || []).forEach(x => ac[at(x)] = '>'); (p.st || []).forEach(([x, c]) => st[at(x)] = c);
+  return [h.join(''), sn.join(''), k.join(''), st.join(''), ac.join('')]; }
+const SO1 = kit(16, { h: [0, 4, 6, 8, 10, 11, 13, 14], s: [1, 2, 5, 7, 9, 12, 15], k: [0, 10], a: [7, 12] });
+const SO6 = kit(16, { h: [0, 4, 6, 8, 10, 11, 13, 14], s: [1, 2, 5, 7, 9, 12], k: [0, 10, 15], a: [7, 12] });
+const SO27 = kit(16, { h: [0, 2, 4, 6, 8, 10, 12, 14], s: [1, 2, 4, 5, 7, 9, 10, 12, 15], k: [0, 3, 10] });
+const SO28 = kit(14, { h: [0, 2, 4, 6, 8, 10, 12], s: [1, 2, 4, 5, 7, 9, 10, 12], k: [0, 3] });
+const SO21 = kit(16, { h: [0, 3, 6, 9, 12, 15], s: [6], k: [0, 12], a: [6] });
+const STEPON = [
+  SO1, SO1, SO1,
+  kit(16, { h: [0, 4, 6, 8], s: [1, 2, 5, 7, 9, 10, 11, 12, 13, 14, 15], k: [0], a: [7, 12] }),
+  SO1, SO6, SO1,
+  kit(16, { h: [0, 4, 6], s: [1, 2, 5, 7], k: [0], a: [7] }),
+  kit(16, { h: [0, 2, 3, 5, 7, 9, 10, 12, 14], s: [1, 4, 6, 8, 11, 13, 15], k: [0, 7, 9, 14], a: [4, 11] }),
+  kit(16, { h: [0, 1, 3, 5, 7, 8, 12, 14, 15], s: [2, 4, 6, 9, 11, 13], k: [5, 7, 10, 12], a: [2, 9] }),
+  kit(16, { h: [1, 3, 5, 6, 8, 10, 12, 13, 15], s: [0, 2, 4, 7, 9, 11, 14], k: [3, 5, 10], a: [0, 7, 14] }),
+  kit(16, { h: [1, 3, 4], s: [0, 2, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15], k: [1, 3, 6], a: [5, 8, 12], st: [[8, 'R'], [9, 'L'], [10, 'R'], [11, 'R'], [12, 'L'], [13, 'R'], [14, 'L'], [15, 'L']] }),
+  SO6, kit(16, { h: [0, 4, 6, 8, 10, 11, 13, 14], s: [1, 2, 5, 7, 9, 12], k: [10, 15], a: [7, 12] }), SO6,
+  kit(16, { h: [0, 4, 6, 8, 10, 11], s: [1, 2, 5, 7, 9, 12, 12 + 8 / 3], k: [10, 12 + 4 / 3], a: [7, 12] }),
+  SO1, SO1, SO1,
+  kit(16, { h: [0], s: [1, 2, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15], k: [10], a: [4, 7, 10, 13] }),
+  SO21,
+  kit(16, { h: [2, 5, 8, 11, 14], s: [2, 14], k: [8], a: [2, 14] }),
+  kit(16, { h: [1, 4, 7, 10, 13], s: [10], k: [4, 13], a: [10] }),
+  SO21,
+  kit(16, { h: [2, 5, 8, 11, 14], s: [2, 14], k: [0, 1, 8], a: [2, 14] }),
+  kit(16, { h: [1, 4, 7, 10], s: [10, 13, 14], k: [4, 8, 9, 15], a: [10] }),
+  SO27, SO28, SO27, SO28,
+  kit(14, { h: [0, 2, 4, 6, 8, 10, 12], s: [1, 2, 4, 5, 7, 9, 10, 12], k: [0, 3, 10] }),
+  kit(14, { h: [0, 2, 4, 6, 8, 10, 12], s: [1, 2, 4, 5, 7, 9, 10, 12], k: [3] }),
+];
 // Sólo č. 4: takt 2/4, 12 krokov na dobu (šestnástina = 3 kroky, šestnástinová triola = 2 kroky).
 const SOLO4 = [
   '0:R! 12:R! 18:L!', '0:R! 12:R 15:L! 18:R 21:L', '0:R 2:L 4:R 6:L 8:R 10:L 12:R 14:L 16:R 18:L!', '0:R! 12:R! 18:R',
@@ -375,6 +409,8 @@ const VENUES = [
     { id: 'u_rud4', name: 'Rudiment 4', bpm: 60, loops: 4, free: true, bars: [pat('LrrLrLrrLrrLrLrr')], tip: 'Prstoklad z horného riadku. Spodný riadok: R L L R L R L L R L L R L R L L. Akcenty sú nepravidelné, počítaj nahlas.' },
     { id: 'u_rud5', name: 'Rudiment 5', bpm: 60, loops: 4, free: true, bars: [pat('LrrLL.r.LrrLL.r.')], tip: 'Štyri šestnástiny a dve osminy. Prstoklad z horného riadku, spodný: R L L R R . L . R L L R R . L .' },
     { id: 'u_rud6', name: 'Rudiment 6', bpm: 60, loops: 4, free: true, bars: [pat('RlrlrLrlRlrlrLrl')], tip: 'Striedavé údery R L. Prečiarknutá nota v učebnici (víriaci úder) je tu zjednodušená na jeden úder.' },
+    { id: 'u_stepon_p', name: 'Step On (pomaly)', bpm: 72, loops: 1, beats: 4, div: 12, free: true, bars: STEPON, tip: 'ABRSM Grade 8, Claire Brock. Takty 1 až 32 v pomalom tempe. Takty 17 až 19 (DEVELOP) hráš podľa poznámky ako prvý riadok. Fill v takte 12 je paradiddle. Šľapka hi-hatu sa nehodnotí.' },
+    { id: 'u_stepon', name: 'Step On', bpm: 115, loops: 1, beats: 4, div: 12, free: true, bars: STEPON, tip: 'Plné tempo 115. Od taktu 21 sa hi-hat delí po troch šestnástinách (3 proti 4), v taktoch 28, 30 až 32 je takt 7/8.' },
     { id: 'u_solo4', name: 'Sólo č. 4', bpm: 60, loops: 1, beats: 2, div: 12, free: true, bars: SOLO4, tip: 'Takt 2/4. Víry (5, 7 a 9 úderov) a prírazy (flam) sú zjednodušené na jeden úder, preto hraj len hlavnú notu. Najprv si daj „Precvičiť pomaly“.' },
   ]},
 ];
@@ -456,16 +492,20 @@ function run() {
   const nb = level.bars.length, total = nb * (stage === 'listen' ? 1 : stage === 'slow' ? Math.min(2, level.loops) : level.loops);
   const notes = [], events = [];
   for (let i = 0; i < 4; i++) events.push({ t: t0 + i * beat, type: i ? 'click' : 'click1' });
+  // takt môže mať vlastnú dĺžku (napr. 7/8): počet krokov = dĺžka riadku, metronóm klikne na každú dobu
+  const barT = [], clicks = []; let tb = T;
   for (let b = 0; b < total; b++) {
-    for (let q = 0; q < BPB; q++) events.push({ t: T + (b * BPB + q) * beat, type: q ? 'click' : 'click1' });
-    const bar = level.bars[b % nb];
-    for (let s = 0; s < STEPS; s++) LANES.forEach((ln, li) => {
-      if (bar[li][s] === 'x') { const t = T + (b * STEPS + s) * sps, hand = bar[3] ? bar[3][s] : '', acc = bar[4] ? bar[4][s] === '>' : false;
+    const bar = level.bars[b % nb], len = bar[0].length; barT.push(tb);
+    for (let q = 0; q * DIV < len; q++) { const t = tb + q * beat; events.push({ t, type: q ? 'click' : 'click1' }); clicks.push({ t, q, half: (len - q * DIV) < DIV }); }
+    for (let s = 0; s < len; s++) LANES.forEach((ln, li) => {
+      if (bar[li][s] === 'x') { const t = tb + s * sps, hand = bar[3] ? bar[3][s] : '', acc = bar[4] ? bar[4][s] === '>' : false;
         notes.push({ t, lane: ln, st: 0, jt: 0, hand: hand && hand !== '.' ? hand : '', acc }); if ((S.guide || stage === 'listen') && !level.calib) events.push({ t, type: ln, guide: true, acc: bar[4] ? acc : null }); }
     });
+    tb += len * sps;
   }
+  barT.push(tb); notes.sort((a, b) => a.t - b.t);
   events.sort((a, b) => a.t - b.t);
-  G = { level, notes, events, ei: 0, t0, T, beat, sps, end: T + total * BPB * beat, total, beats: BPB, div: DIV, steps: STEPS, score: 0, combo: 0, maxCombo: 0, pts: 0, miss: 0, dts: [], raw: [], fx: [], hits: [], parts: [], waves: [], pop: null, slow: stage === 'slow', auto: stage === 'listen' };
+  G = { level, notes, events, ei: 0, t0, T, beat, sps, end: tb, barT, clicks, total, beats: BPB, div: DIV, steps: STEPS, score: 0, combo: 0, maxCombo: 0, pts: 0, miss: 0, dts: [], raw: [], fx: [], hits: [], parts: [], waves: [], pop: null, slow: stage === 'slow', auto: stage === 'listen' };
   G.timer = setInterval(tick, 25); recBegin(G);
   $('#g-venue').textContent = (LES.stages.length > 1 ? 'Krok ' + (LES.i + 1) + ' z ' + LES.stages.length + ': ' + STAGE[stage] : level.venue) + ' · ' + Math.round(level.bpm * rate) + ' úderov za minútu';
   $('#g-name').textContent = level.name;
@@ -556,10 +596,10 @@ function draw(vis, now) {
     g2.fillText(ln === 'h' ? 'HI-HAT' : ln === 's' ? 'RYTMIČÁK' : 'KOPÁK', 8, ly(i) - laneH * 0.34);
   });
   // doby a počítanie
-  const b0 = Math.floor((vis - G.T) / G.beat * 2) - 1;
-  for (let e = Math.max(0, b0); ; e++) {
-    const x = X(G.T + e * G.beat / 2); if (x > W + 20) break; if (G.T + e * G.beat / 2 > G.end - 0.001) break;
-    const on = e % 2 === 0, q = Math.floor(e / 2) % (G.beats || 4);
+  const ticks = [];
+  for (const c of G.clicks) { if (X(c.t) < -40) continue; if (X(c.t) > W + 20) break; ticks.push({ t: c.t, on: true, q: c.q }); if (!c.half) ticks.push({ t: c.t + G.beat / 2, on: false, q: c.q }); }
+  for (const tk of ticks) {
+    const x = X(tk.t), on = tk.on, q = tk.q;
     g2.strokeStyle = on ? (q === 0 ? '#aca6d8' : '#4d459a') : '#2c2668'; g2.lineWidth = q === 0 && on ? 2 : 1;
     g2.beginPath(); g2.moveTo(x, y0 - 6); g2.lineTo(x, H - 8); g2.stroke();
     g2.fillStyle = on ? '#f4f0ff' : '#aca6d8'; g2.textAlign = 'center'; g2.font = (on ? '800 15px' : '700 12px') + ' "Baloo 2",sans-serif';
@@ -681,9 +721,10 @@ function result(lv, r) {
 function errMap(g) {
   if (!g || !g.notes.length) return '';
   const C = { ok: '#9be58f', off: '#f2b63c', miss: '#ff6b5e', extra: '#aca6d8' }, LN = { h: 'Hi-hat', s: 'Rytmičák', k: 'Kopák' };
-  const BS = g.steps || 16, DV = g.div || 4, ROWB = Math.max(1, Math.round(8 / (g.beats || 4))), steps = ROWB * BS, rowDur = steps * g.sps, rows = Math.ceil(g.total / ROWB);
+  const DV = g.div || 4, ROWB = Math.max(1, Math.round(8 / (g.beats || 4))), BT = g.barT || [], rows = Math.ceil(g.total / ROWB);
+  const rS = r => BT[r * ROWB], rE = r => BT[Math.min(g.total, (r + 1) * ROWB)], rowDur = Math.max(...Array.from({ length: rows }, (_, r) => rE(r) - rS(r)));
   const W = 640, X0 = 78, X1 = W - 14, LH = 24, RH = LH * 3 + 26, H = rows * RH + 4;
-  const xOf = t => X0 + (((t - g.T) % rowDur + rowDur) % rowDur) / rowDur * (X1 - X0), rowOf = t => Math.max(0, Math.min(rows - 1, Math.floor((t - g.T) / rowDur + 1e-6)));
+  const rowOf = t => { let b = 0; while (b + 1 < g.total && BT[b + 1] <= t + 1e-6) b++; return Math.min(rows - 1, Math.floor(b / ROWB)); }, xOf = t => { const r = rowOf(t); return X0 + (t - rS(r)) / rowDur * (X1 - X0); };
   const yOf = (r, l) => r * RH + 20 + LANES.indexOf(l) * LH + LH / 2;
   const cnt = { ok: 0, early: 0, late: 0, miss: 0, extra: 0, wrong: 0 }, perLane = { h: 0, s: 0, k: 0 };
   const hits = g.hits.filter(h => h.g !== 'miss'), extras = g.hits.filter(h => h.g === 'miss'), missed = g.notes.filter(n => n.st === 2);
@@ -696,7 +737,8 @@ function errMap(g) {
     const y0 = r * RH;
     o += '<text x="4" y="' + (y0 + 12) + '" fill="#aca6d8" font-size="11" font-weight="700">TAKT ' + (r * ROWB + 1) + (ROWB > 1 ? '–' + Math.min(g.total, r * ROWB + ROWB) : '') + '</text>';
     LANES.forEach(l => { const y = yOf(r, l); o += '<text x="4" y="' + (y + 4) + '" fill="#f4f0ff" font-size="12" font-weight="700">' + LN[l] + '</text><line x1="' + X0 + '" x2="' + X1 + '" y1="' + y + '" y2="' + y + '" stroke="#3a3470" stroke-width="1"/>'; });
-    for (let st = 0; st <= steps; st += DV) { const x = X0 + st / steps * (X1 - X0); o += '<line x1="' + x + '" x2="' + x + '" y1="' + (y0 + 18) + '" y2="' + (y0 + 18 + LH * 3) + '" stroke="' + (st % BS ? '#2e2960' : '#5a5299') + '" stroke-width="' + (st % BS ? 1 : 2) + '"/>'; }
+    for (const c of (g.clicks || [])) { if (c.t < rS(r) - 1e-6 || c.t > rE(r) + 1e-6) continue; const x = X0 + (c.t - rS(r)) / rowDur * (X1 - X0); o += '<line x1="' + x + '" x2="' + x + '" y1="' + (y0 + 18) + '" y2="' + (y0 + 18 + LH * 3) + '" stroke="' + (c.q ? '#2e2960' : '#5a5299') + '" stroke-width="' + (c.q ? 1 : 2) + '"/>'; }
+    { const x = X0 + (rE(r) - rS(r)) / rowDur * (X1 - X0); o += '<line x1="' + x + '" x2="' + x + '" y1="' + (y0 + 18) + '" y2="' + (y0 + 18 + LH * 3) + '" stroke="#5a5299" stroke-width="2"/>'; }
   }
   for (const n of g.notes) {
     const r = rowOf(n.t), x = xOf(n.t), y = yOf(r, n.lane);
@@ -707,7 +749,7 @@ function errMap(g) {
   }
   for (const h of hits) {
     const r = rowOf(h.nt), xn = xOf(h.nt), y = yOf(r, h.lane), a = Math.abs(h.d), ok = a <= PERFECT;
-    const sw = (X1 - X0) / steps, x = xn + Math.max(-0.8 * sw, Math.min(0.8 * sw, h.d / rowDur * (X1 - X0) * 2));
+    const sw = (X1 - X0) / (rowDur / g.sps), x = xn + Math.max(-0.8 * sw, Math.min(0.8 * sw, h.d / rowDur * (X1 - X0) * 2));
     if (ok) { cnt.ok++; o += '<circle cx="' + xn + '" cy="' + y + '" r="6" fill="' + C.ok + '"/>'; continue; }
     cnt[h.d < 0 ? 'early' : 'late']++; perLane[h.lane]++;
     o += '<line x1="' + xn + '" y1="' + y + '" x2="' + x + '" y2="' + y + '" stroke="' + C.off + '" stroke-width="2"/><circle cx="' + x + '" cy="' + y + '" r="6" fill="' + C.off + '"/>' +
