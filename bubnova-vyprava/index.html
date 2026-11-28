@@ -487,7 +487,9 @@ function frame() {
   if (!G) return;
   const now = ctx.currentTime, vis = now - outLat();
   if (G.auto) for (const n of G.notes) { if (n.t > vis) break; if (!n.st) { n.st = 1; n.jt = now; flashPad(n.lane); } }
-  const lim = vis - S.off[lastKind] / 1000 - (G.level.calib ? 0.3 : WIN);
+  // mikrofón rozhoduje o bubne až po doznení úderu a zvuk z Androidu chodí po blokoch: notu vyhlásime za minutú
+  // až s rezervou, inak by neskôr doručený správny úder už nemal čo trafiť
+  const lim = vis - S.off[lastKind] / 1000 - (G.level.calib ? 0.3 : WIN) - (micTimer ? 0.3 : 0);
   for (const n of G.notes) { if (n.t > lim) break; if (!n.st) { n.st = 2; n.jt = now; if (!G.level.calib) { G.miss++; G.combo = 0; hud(); } } }
   $('#g-prog').style.width = Math.max(0, Math.min(100, (vis - G.T) / (G.end - G.T) * 100)) + '%';
   draw(vis, now);
@@ -776,7 +778,7 @@ $('#opt-mic').addEventListener('click', async () => {
       if (!G) io('Mikrofón počúva. Zachytené údery: ' + hits + '.');
     };
     const onEvent = e => {
-      if (REC) REC.ev.push({ t: Number(e.t.toFixed(4)), c: e.c });
+      if (REC) REC.ev.push({ t: Number(e.t.toFixed(4)), c: e.c, a: Number((ctx.currentTime - e.t).toFixed(3)) });
       if (DC) return drumCalHit(e);
       const play = G && !G.auto && !G.level.calib;
       // hra vie, čo sa má zahrať: pri očakávanej note stačí slabší úder, presluch mimo nôt sa ignoruje
