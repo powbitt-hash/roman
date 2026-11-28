@@ -691,6 +691,8 @@ $('#opt-midi').addEventListener('click', async () => {
   } catch (e) { io(window.Capacitor ? 'MIDI v Android aplikácii zatiaľ nefunguje. Hraj ťukaním na pady alebo cez mikrofón.' : 'MIDI tu nie je dostupné. Otvor súbor hry priamo v prehliadači Chrome alebo Edge na počítači.'); }
 });
 let micTimer = null, micSrc = null, micNode = null, micModule = null;
+const micPost = m => { if (micNode) micNode.port.postMessage(m); };
+const micModel = () => micPost({ model: wantNmf() ? S.nmf : null });
 const micThr = () => 0.02 + (10 - (S.micSens || 6)) * 0.015;
 // Detekcia úderov priamo vo zvukovom vlákne, zvlášť v troch pásmach (nízke = kopák, stredné = rytmičák, vysoké = hi-hat)
 // a v celom signáli. Úder, ktorý zanikne v doznievaní činelu, sa tak zachytí aspoň vo svojom pásme.
@@ -699,32 +701,46 @@ const MIC_WORKLET = `
 function bq(type,f,q,sr){const w=2*Math.PI*f/sr,c=Math.cos(w),s=Math.sin(w),a=s/(2*q);let b0,b1,b2;
 if(type==='lp'){b0=(1-c)/2;b1=1-c;b2=(1-c)/2}else if(type==='hp'){b0=(1+c)/2;b1=-(1+c);b2=(1+c)/2}else{b0=a;b1=0;b2=-a}
 const a0=1+a;return{b0:b0/a0,b1:b1/a0,b2:b2/a0,a1:-2*c/a0,a2:(1-a)/a0,x1:0,x2:0,y1:0,y2:0}}
-const FA=0.03,FB=0.09;
+${nmfSolve.toString()}
+const NMF_IT=100;${drumAct.toString()}
+const HOP=256;
 class O extends AudioWorkletProcessor{constructor(){super();this.thr=0.08;this.gap=0.09;this.last=-1;
 this.B=[{n:'all',f:null,g:1},{n:'k',f:bq('lp',150,0.7,sampleRate),g:1.2},{n:'s',f:bq('bp',700,0.9,sampleRate),g:0.8},{n:'h',f:bq('hp',5000,0.7,sampleRate),g:0.45}];
 for(const b of this.B){b.env=0;b.slow=0.003;b.last=-1}
-this.A=[50,80,125,200,315,500,800,1250,2000,3150,5000,8000,12500].filter(f=>f<sampleRate*0.42).map(f=>bq('bp',f,2,sampleRate));this.NA=this.A.length;
-this.bl=new Float32Array(this.NA);this.bh=[];this.ba=Math.exp(-1/(0.015*sampleRate));
+const fc=[];for(let k=0;;k++){const f=40*Math.pow(2,k/2);if(f>sampleRate*0.42)break;fc.push(f)}
+this.A=fc.map(f=>bq('bp',f,2.9,sampleRate));this.K=fc.length;this.acc=new Float64Array(this.K);this.cnt=0;this.prev=new Float64Array(this.K);
+this.M=null;this.mid=null;this.gh=[];this.oh=[];this.avg=[0,0,0];this.le=[-1,-1,-1];this.lo=[0,0,0];this.bg=null;
 this.df=Math.exp(-1/(0.025*sampleRate));this.hitLvl=0;this.ds=Math.exp(-1/(0.25*sampleRate));this.wf=[];this.wt=0;this.pend=null;
-this.port.onmessage=e=>{this.thr=e.data.thr;if(e.data.gap)this.gap=e.data.gap}}
-process(inp){const ch=inp[0]&&inp[0][0];if(!ch)return true;let mn=0,mx=0;const NA=this.NA,A=this.A,bl=this.bl,ba=this.ba;
-this.bh.push(Float32Array.from(bl));if(this.bh.length>4)this.bh.shift();
+this.port.onmessage=e=>{const d=e.data;if(d.thr)this.thr=d.thr;if(d.gap)this.gap=d.gap;
+if('model' in d){const m=d.model;if(!m){this.M=null;this.mid=null}else if(m.id!==this.mid){this.M=m;this.mid=m.id;this.gh=[];this.oh=[];this.avg=[0,0,0]}}
+if(d.bg===1)this.bg={s:new Float64Array(this.K),n:0};if(d.bg===0&&this.bg){const b=this.bg;this.bg=null;this.port.postMessage({bgSpec:Array.from(b.s,x=>x/Math.max(1,b.n))})}}}
+frame(t){const K=this.K,x=new Array(K);for(let k=0;k<K;k++){x[k]=Math.sqrt(this.acc[k]/HOP);this.acc[k]=0}
+if(this.bg){for(let k=0;k<K;k++)this.bg.s[k]+=x[k];this.bg.n++}
+if(this.pend&&!this.M){this.pend.spec.push(x);if(this.pend.spec.length>=8)this.flush()}
+if(this.M)this.detect(x,t);this.prev=x}
+detect(x,t){const M=this.M,g=drumAct(x,M);this.gh.push(g);if(this.gh.length>3)this.gh.shift();
+const n=this.gh.length,o=[0,0,0];for(let d=0;d<3;d++){const a=n>1?this.gh[n-2][d]:0,b=n>2?this.gh[n-3][d]:a;o[d]=Math.max(0,g[d]-Math.min(a,b))}
+this.oh.push({o,t});if(this.oh.length>3)this.oh.shift();if(this.oh.length<3)return;
+const P=this.oh[1],Q=this.oh[0],R=this.oh[2],tp=P.t-HOP/sampleRate*2;
+for(let d=0;d<3;d++){const v=P.o[d];
+if(v>0&&v>=Q.o[d]&&v>R.o[d]&&v>this.avg[d]*2.5){const r=v/M.ref[d];
+if(r>=0.08&&(tp-this.le[d]>=this.gap||v>this.lo[d]*1.5)){this.le[d]=tp;this.lo[d]=v;this.port.postMessage({cand:tp,lane:d,r})}}
+this.avg[d]=this.avg[d]*0.92+Q.o[d]*0.08}}
+process(inp){const ch=inp[0]&&inp[0][0];if(!ch)return true;let mn=0,mx=0;const K=this.K,A=this.A,acc=this.acc;
 for(let i=0;i<ch.length;i++){const x=ch[i];if(x<mn)mn=x;if(x>mx)mx=x;const t=currentTime+i/sampleRate;
-const P=this.pend,ph=P?(t-P.t<FA?P.ea:(t-P.t<FB?P.eb:null)):null;if(P){if(t-P.t<FA)P.na++;else if(t-P.t<FB)P.nb++}
-for(let k=0;k<NA;k++){const f=A[k],y=f.b0*x+f.b1*f.x1+f.b2*f.x2-f.a1*f.y1-f.a2*f.y2;f.x2=f.x1;f.x1=x;f.y2=f.y1;f.y1=y;const e=y*y;bl[k]=bl[k]*ba+e*(1-ba);if(ph)ph[k]+=e}
+for(let k=0;k<K;k++){const f=A[k],y=f.b0*x+f.b1*f.x1+f.b2*f.x2-f.a1*f.y1-f.a2*f.y2;f.x2=f.x1;f.x1=x;f.y2=f.y1;f.y1=y;acc[k]+=y*y}
+if(++this.cnt>=HOP){this.cnt=0;this.frame(t+1/sampleRate)}
+if(this.M)continue;
 for(const b of this.B){let y=x;if(b.f){const f=b.f;y=f.b0*x+f.b1*f.x1+f.b2*f.x2-f.a1*f.y1-f.a2*f.y2;f.x2=f.x1;f.x1=x;f.y2=f.y1;f.y1=y}
 const v=Math.abs(y),prev=b.env;b.env=v>b.env?v:b.env*this.df;b.slow=b.slow*this.ds+b.env*(1-this.ds);
 if(b.env>this.thr*b.g&&b.env>prev&&b.env>b.slow*2.2&&prev<this.thr*b.g*0.9+b.slow*1.2&&t-b.last>this.gap){b.last=t;
-if(this.pend&&t-this.pend.t<0.05){if(this.pend.bands.indexOf(b.n)<0)this.pend.bands.push(b.n)}else if(!this.pend&&this.ok(t)){this.pend={t:t,bands:[b.n],ea:new Float64Array(NA),eb:new Float64Array(NA),na:0,nb:0,base:this.bh[0],pk:0}}}}
+if(this.pend&&t-this.pend.t<0.05){if(this.pend.bands.indexOf(b.n)<0)this.pend.bands.push(b.n)}else if(!this.pend&&this.ok(t)){this.pend={t:t,bands:[b.n],spec:[this.prev],pk:0}}}}
 if(this.pend&&this.B[0].env>this.pend.pk)this.pend.pk=this.B[0].env}
-if(this.pend&&currentTime-this.pend.t>FB)this.flush();
 if(!this.wf.length)this.wt=currentTime;this.wf.push(mn,mx);if(this.wf.length>=16){this.port.postMessage({wf:this.wf,t:this.wt,dt:ch.length/sampleRate});this.wf=[]}
 return true}
 ok(t){const dt=t-this.last;if(dt<this.gap)return false;return this.B[0].env>this.hitLvl*Math.exp(-dt/0.12)*2.2}
-flush(){if(!this.pend)return;const p=this.pend;this.pend=null;this.last=p.t;this.hitLvl=p.pk;const v=[];
-for(let k=0;k<this.NA;k++)v.push(Math.max(0,p.ea[k]/Math.max(1,p.na)-p.base[k]));for(let k=0;k<this.NA;k++)v.push(Math.max(0,p.eb[k]/Math.max(1,p.nb)-p.base[k]*0.5));
-this.port.postMessage({hit:p.t,bands:p.bands,vec:v})}}
-registerProcessor('bubny-onset5',O);`;
+flush(){if(!this.pend)return;const p=this.pend;this.pend=null;this.last=p.t;this.hitLvl=p.pk;this.port.postMessage({hit:p.t,bands:p.bands,spec:p.spec})}}
+registerProcessor('bubny-onset6',O);`;
 $('#opt-mic').addEventListener('click', async () => {
   audio();
   if (micTimer) { clearInterval(micTimer); micTimer = null; if (micNode) { micNode.port.onmessage = null; micNode.disconnect(); micNode = null; } $('#mic-ui').hidden = true; scopeStop(); if (micSrc) { micSrc.mediaStream.getTracks().forEach(t => t.stop()); micSrc = null; } $('#opt-mic').setAttribute('aria-pressed', false); S.mic = false; save(); io('Mikrofón je vypnutý.'); return; }
@@ -734,14 +750,32 @@ $('#opt-mic').addEventListener('click', async () => {
     micSrc = ctx.createMediaStreamSource(stream);
     let hits = 0;
     const meter = $('#mic-meter'), bar = meter.firstElementChild;
-    const onHit = (t, bands, vec) => {
-      if (DC && vec) return drumCalHit(vec, t);
-      const lanes = vec && drumReady() ? classify(vec) : null; logHit(vec, lanes, G ? 'hra' : 'voľne');
-      if (lanes && !lanes.length) { scopeHit(t, [], true); return; } // falošný úder (napr. dozvuk iného bubna)
-      hits++; const lane = scopeHit(t, lanes || bands); micLane = lane;
-      if (lanes) lanes.forEach(l => hit(l, 'mic', t)); else hit('any', 'mic', t);
-      meter.classList.add('hit'); setTimeout(() => meter.classList.remove('hit'), 120);
+    const flashMeter = () => { meter.classList.add('hit'); setTimeout(() => meter.classList.remove('hit'), 120); };
+    // surový úder (bez kalibrácie alebo počas učenia bubnov)
+    const onHit = (t, bands, spec) => {
+      if (DC) { if (spec) drumCalHit({ t, spec }); return; }
+      if (wantNmf()) return; // rozpoznávanie beží cez šablóny, surové údery ignorujeme
+      hits++; micLane = scopeHit(t, bands); hit('any', 'mic', t); flashMeter();
       if (!G) io('Mikrofón počúva. Zachytené údery: ' + hits + '.');
+    };
+    // kandidáti z rozkladu (NMF): jeden na bubon; spojíme tie, ktoré prišli naraz (do 25 ms)
+    let evq = null;
+    const flushEv = () => { const e = evq; evq = null; if (e) { clearTimeout(e.tm); onEvent(e); } };
+    const onCand = (t, lane, r) => { const d = DRUMS[lane];
+      if (evq && t - evq.t < 0.025) { evq.c[d] = Math.max(evq.c[d] || 0, r); return; }
+      flushEv(); evq = { t, c: { [d]: r } }; evq.tm = setTimeout(flushEv, 40); };
+    const onEvent = e => {
+      if (DC) return drumCalHit(e);
+      const play = G && !G.auto && !G.level.calib;
+      // hra vie, čo sa má zahrať: pri očakávanej note stačí slabší úder, presluch mimo nôt sa ignoruje
+      const near = play ? d => { const th = e.t - outLat() - (S.off.mic || 0) / 1000; return G.notes.some(n => !n.st && n.lane === d && Math.abs(n.t - th) <= WIN); } : null;
+      let lanes = lanesOf(e.c, near);
+      if (play) lanes = lanes.filter(d => near(d) || e.c[d] >= 2 * gateOf(d));
+      logHit(e.c, lanes, G ? 'hra' : 'voľne');
+      if (!lanes.length) { scopeHit(e.t, [], true); return; }
+      hits++; micLane = scopeHit(e.t, ['all'].concat(lanes)); flashMeter();
+      if (G && G.level.calib) hit('any', 'mic', e.t); else lanes.forEach(l => hit(l, 'mic', e.t));
+      if (!G) io('Mikrofón počúva. Zachytené údery: ' + hits + ' (naposledy ' + lanes.map(l => DRUM_NAME[l]).join(' + ') + ').');
     };
     $('#mic-ui').hidden = false;
     scopeStart();
@@ -749,9 +783,9 @@ $('#opt-mic').addEventListener('click', async () => {
     if (ctx.audioWorklet && window.AudioWorkletNode) {
       try {
         if (!micModule) { micModule = URL.createObjectURL(new Blob([MIC_WORKLET], { type: 'application/javascript' })); await ctx.audioWorklet.addModule(micModule); }
-        node = new AudioWorkletNode(ctx, 'bubny-onset5', { numberOfInputs: 1, numberOfOutputs: 0 });
-        node.port.onmessage = e => { const m = e.data; if (m.hit != null) onHit(m.hit, m.bands, m.vec); else if (m.wf) scopeWave(m.t, m.dt, m.wf, bar); };
-        const cfg = () => node.port.postMessage({ thr: micThr(), gap: (S.micGap || 110) / 1000 });
+        node = new AudioWorkletNode(ctx, 'bubny-onset6', { numberOfInputs: 1, numberOfOutputs: 0 });
+        node.port.onmessage = e => { const m = e.data; if (m.cand != null) onCand(m.cand, m.lane, m.r); else if (m.hit != null) onHit(m.hit, m.bands, m.spec); else if (m.wf) scopeWave(m.t, m.dt, m.wf, bar); else if (m.bgSpec && DC) DC.bg = m.bgSpec; };
+        const cfg = () => node.port.postMessage({ thr: micThr(), gap: (S.micGap || 110) / 1000, model: wantNmf() ? S.nmf : null });
         cfg(); micSrc.connect(node); micNode = node;
         micTimer = setInterval(() => { if (ctx.state !== 'running') ctx.resume().catch(() => {}); cfg(); }, 250);
       } catch (e) { node = null; }
@@ -778,50 +812,70 @@ if (S.mic) addEventListener('pointerdown', function again() { removeEventListene
 // Pri hre sa každý úder rozloží na zmes odtlačkov (nezáporné najmenšie štvorce), takže sa rozpozná aj súčasný
 // úder dvoch bubnov. Úder slabší než 30 % kalibrovanej sily daného bubna sa ignoruje (dozvuk, presluch).
 const DRUMS = ['k', 's', 'h'], DRUM_NAME = { k: 'kopák', s: 'rytmičák', h: 'hi-hat' };
+// Rozpoznávanie bubnov (NMF, Dittmar & Gärtner 2014): spektrum každého 5 ms okna sa rozloží na súčet
+// šablón kopáka, rytmičáka, hi-hatu a šumu miestnosti. Úder sa hľadá v aktivite každého bubna zvlášť,
+// takže súčasné údery sa rozpoznajú prirodzene. Šablóny a prahy pre každý bubon dáva kalibrácia.
+const DRUM_V = 3;
+function nmfSolve(x, W, g, it) {
+  const J = W.length, K = x.length, v = new Float64Array(K); let sx = 0;
+  for (let k = 0; k < K; k++) sx += x[k];
+  for (let j = 0; j < J; j++) g[j] = sx / J + 1e-12;
+  for (let n = 0; n < it; n++) {
+    for (let k = 0; k < K; k++) { let s = 1e-12; for (let j = 0; j < J; j++) s += W[j][k] * g[j]; v[k] = x[k] / s; }
+    for (let j = 0; j < J; j++) { let s = 0; for (let k = 0; k < K; k++) s += W[j][k] * v[k]; g[j] *= s; }
+  }
+  return g;
+}
 const vnorm = v => Math.sqrt(v.reduce((a, x) => a + x * x, 0)) || 1e-9;
-// Rozpoznávanie bubnov: každý úder = energia v 13 pásmach v prvých 30 ms a v 30–90 ms (začiatok aj doznievanie).
-// Porovnáva sa so všetkými uloženými kalibračnými údermi (k najbližších susedov), vrátane úderov naraz.
-const DRUM_V = 2;
-const sampOf = d => (S.drumSamp || []).filter(x => x.l === d);
-const drumCalibrated = () => S.drumV === DRUM_V && DRUMS.every(d => sampOf(d).length >= 3);
-const drumReady = () => !!(S.drumOn && drumCalibrated());
-const labOf = arr => DRUMS.filter(d => arr.includes(d)).join('');
 const vsum = v => v.reduce((a, x) => a + x, 0);
+const unit = v => { const s = vsum(v) || 1; return v.map(x => x / s); };
 const q3 = v => v.map(x => Number(x.toPrecision(3)));
-function dfeat(v) { const t = vsum(v) + 1e-15; return v.map(x => Math.log10(x / t + 1e-4)); }
+const labOf = arr => DRUMS.filter(d => arr.includes(d)).join('');
+const drumCalibrated = () => !!(S.drumV === DRUM_V && S.nmf && S.nmf.W);
+const drumReady = () => !!(S.drumOn && drumCalibrated());
+const wantNmf = () => drumCalibrated() && (S.drumOn || !!(DC && DC.nmf));
+// rozhodnutie pre každý bubon: jeho aktivita mínus presluch od ostatných bubnov musí prekročiť prah
+const gateRule = d => { const g = S.gates && S.gates[d]; return typeof g === 'number' ? { t: g, b: {} } : g || { t: 0.3, b: {} }; };
+const gateOf = d => gateRule(d).t * (S.drumGate || 30) / 30;
+const gScore = (c, d, rule) => (c[d] || 0) - DRUMS.reduce((a, e) => a + (e !== d ? (rule.b[e] || 0) * (c[e] || 0) : 0), 0);
+const lanesOf = (c, near) => DRUMS.filter(d => gScore(c, d, gateRule(d)) >= gateOf(d) * (near && near(d) ? 0.6 : 1));
+// šablóna úderu: nárast spektra v prvých ~20 ms oproti oknu pred úderom
+function hitShape(spec) { const K = spec[0].length, a = new Array(K).fill(0);
+  for (let i = 1; i <= 4 && i < spec.length; i++) for (let k = 0; k < K; k++) a[k] += Math.max(0, spec[i][k] - spec[0][k]); return unit(a); }
+const lshape = s => s.map(x => Math.log10(x + 1e-4));
 function ddist(a, b) { let s = 0; for (let i = 0; i < a.length; i++) { const d = a[i] - b[i]; s += d * d; } return Math.sqrt(s); }
-let DM = null; // model (vyrovnávacia pamäť)
-function drumModel() {
-  const all = S.drumSamp || [];
-  if (DM && DM.src === all && DM.n === all.length) return DM;
-  const real = all.filter(x => x.v && x.l), items = real.map(x => ({ f: dfeat(x.v), l: x.l, src: x }));
-  const by = {}; DRUMS.forEach(d => by[d] = real.filter(x => x.l === d));
-  // údery naraz, ktoré nikto nenahral: poskladáme ich zo samostatných úderov s rôznou silou
-  let seed = 7; const rnd = () => (seed = seed * 16807 % 2147483647) / 2147483647;
-  ['ks', 'kh', 'sh', 'ksh'].forEach(c => { const ds = c.split(''); if (ds.some(d => !by[d].length)) return;
-    for (let n = real.filter(x => x.l === c).length; n < 12; n++) { const v = new Array(real[0].v.length).fill(0);
-      ds.forEach(d => { const s = by[d][Math.floor(rnd() * by[d].length)].v, g = 0.3 + rnd() * 1.2; s.forEach((x, k) => v[k] += x * g); });
-      items.push({ f: dfeat(v), l: c, syn: true }); } });
-  const med = {}; DRUMS.forEach(d => { const es = by[d].map(x => vsum(x.v)).sort((a, b) => a - b); med[d] = es.length ? es[es.length >> 1] : 0; });
-  const rr = items.filter(i => !i.syn), nn = rr.map(i => Math.min(...rr.filter(j => j !== i).map(j => ddist(i.f, j.f)))).filter(isFinite).sort((a, b) => a - b);
-  DM = { src: all, n: all.length, items, med, nnMed: nn.length ? nn[nn.length >> 1] : 1 };
-  return DM;
+// rovnaký výpočet ako v mikrofóne: najväčší nárast aktivity bubna počas úderu
+const NMF_IT = 100;
+// aktivita každého bubna = súčet aktivít jeho šablón (každý kalibračný úder je vlastná šablóna)
+function drumAct(x, M) { const g = nmfSolve(x.map((v, k) => v / M.sc[k]), M.W, new Float64Array(M.W.length), NMF_IT), a = [0, 0, 0]; for (let j = 0; j < g.length; j++) if (M.grp[j] < 3) a[M.grp[j]] += g[j]; return a; }
+function simOnsets(spec, M) { const gs = spec.map(x => drumAct(x, M)), o = [0, 0, 0];
+  for (let i = 1; i < gs.length; i++) for (let d = 0; d < 3; d++) { const a = gs[i - 1][d], b = i > 1 ? gs[i - 2][d] : a; o[d] = Math.max(o[d], gs[i][d] - Math.min(a, b)); }
+  return o; }
+function buildModel(hits, bg) { // hits: {l, spec}
+  // vyrovnanie pásiem: hi-hat má v spektre oveľa menej energie než kopák, bez vyrovnania by sa v rozklade stratil
+  const shapes = hits.map(h => ({ l: h.l, s: hitShape(h.spec) })), K = shapes[0].s.length;
+  const mean = DRUMS.map(d => unit(shapes.filter(h => h.l === d).reduce((a, h) => a.map((x, k) => x + h.s[k]), new Array(K).fill(0))));
+  const sc = new Array(K).fill(0).map((_, k) => (mean[0][k] + mean[1][k] + mean[2][k]) / 3 + 1e-3 / K);
+  const W = [], grp = []; shapes.forEach(h => { W.push(q3(unit(h.s.map((x, k) => x / sc[k] + 1e-4)))); grp.push(DRUMS.indexOf(h.l)); });
+  const N = bg && vsum(bg) > 0 ? unit(bg.map((x, k) => (x + vsum(bg) / K * 0.05) / sc[k])) : unit(sc.map(x => 1 / x));
+  W.push(q3(N)); grp.push(3);
+  const M = { id: Date.now(), W, grp, sc: q3(sc), ref: [1, 1, 1] };
+  M.ref = DRUMS.map((d, j) => { const os = hits.filter(h => h.l === d).map(h => simOnsets(h.spec, M)[j]).sort((a, b) => a - b); return Number((os[os.length >> 1] || 1e-6).toPrecision(4)); });
+  const lab = hits.map(h => { const o = simOnsets(h.spec, M), c = {}; DRUMS.forEach((d, j) => c[d] = Number((o[j] / M.ref[j]).toPrecision(3))); return { e: h.l, c, sim: 1 }; });
+  return { model: M, lab };
 }
-function classifyFull(vec, skip) {
-  const M = drumModel(), f = dfeat(vec), K = 5;
-  const ds = M.items.filter(i => !skip || i.src !== skip).map(i => ({ d: ddist(f, i.f), l: i.l })).sort((a, b) => a.d - b.d).slice(0, K);
-  if (!ds.length) return { lanes: [], why: 'empty' };
-  const vote = {}; ds.forEach(x => vote[x.l] = (vote[x.l] || 0) + 1 / (x.d + 0.05));
-  let best = null; for (const l in vote) if (!best || vote[l] > vote[best]) best = l;
-  const lanes = best.split('');
-  if (ds[0].d > Math.max(2, M.nnMed * 5)) return { lanes: [], why: 'unknown', best, d: ds[0].d };
-  const g = (S.drumGate || 30) / 100;
-  if (vsum(vec) < g * g * Math.min(...lanes.map(d => M.med[d] || 0))) return { lanes: [], why: 'weak', best };
-  return { lanes, best, d: ds[0].d };
+// prah pre každý bubon: hodnota, pri ktorej sedí najviac označených úderov (kalibrácia + opravy)
+function tuneGates(lab) {
+  const out = {}, B = [0, 0.1, 0.2, 0.3, 0.5];
+  DRUMS.forEach(d => { const o = DRUMS.filter(e => e !== d); let best = null;
+    for (const b1 of B) for (const b2 of B) { const rule = { t: 0, b: { [o[0]]: b1, [o[1]]: b2 } }, sc = lab.map(l => [gScore(l.c, d, rule), l.e.includes(d)]);
+      for (let g = 0.05; g <= 0.801; g += 0.025) { const ok = sc.filter(([v, y]) => (v >= g) === y).length, cost = b1 + b2 + Math.abs(g - 0.3);
+        if (!best || ok > best.ok || (ok === best.ok && cost < best.cost)) best = { ok, cost, rule: { t: Number(g.toFixed(3)), b: rule.b } }; } }
+    out[d] = best.rule; });
+  return out;
 }
-const classify = (vec, skip) => classifyFull(vec, skip).lanes;
 const HITLOG = []; // posledné údery z mikrofónu, na export
-function logHit(vec, lanes, ctxName) { if (!vec) return; HITLOG.push({ t: Math.round(performance.now()), c: ctxName, v: q3(vec), r: labOf(lanes || []) }); if (HITLOG.length > 200) HITLOG.shift(); }
+function logHit(c, lanes, ctxName) { HITLOG.push({ c: ctxName, r: labOf(lanes || []), v: c ? DRUMS.map(d => Number((c[d] || 0).toPrecision(3))) : null }); if (HITLOG.length > 200) HITLOG.shift(); }
 let DC = null; // stav sprievodcu kalibráciou bubnov
 const DC_STEPS = [
   { id: 'quiet', kind: 'quiet', dur: 3, title: 'Ticho v miestnosti', text: 'Polož paličky a chvíľu nehraj. Appka zmeria hluk v miestnosti a podľa neho nastaví citlivosť mikrofónu.' },
@@ -833,10 +887,9 @@ const DC_STEPS = [
   { id: 'sh', kind: 'check', gap: 1.6, pat: [['s', 'h'], ['s', 'h'], ['s', 'h'], ['s', 'h']], title: 'Rytmičák a hi-hat naraz', text: 'Udri rytmičák a hi-hat v tom istom okamihu, keď noty dorazia k čiare.' },
 ];
 const DC_LEAD = 3, DC_WIN = 0.3, DC_ROWS = ['h', 's', 'k'];
-const dcCentroid = fs => fs[0].map((_, k) => fs.reduce((a, f) => a + f[k], 0) / fs.length);
 const dcSame = (a, b) => a.length === b.length && a.every(x => b.includes(x));
 const dcNow = () => ctx ? ctx.currentTime : 0;
-function dcNew() { return { i: 0, phase: 'intro', cues: [], dts: [], lab: [], res: {}, noise: 0, falseHits: 0, msg: '', flash: null }; }
+function dcNew() { return { i: 0, phase: 'intro', cues: [], dts: [], lab: [], learn: [], res: {}, noise: 0, falseHits: 0, msg: '', flash: null, nmf: false }; }
 function drumCalOpen() {
   if (!micTimer) { $('#opt-mic').click(); }
   DC = dcNew(); show('drumcal'); drumCalRender();
@@ -845,9 +898,9 @@ function drumCalOpen() {
 function dcStartStep() {
   if (!micTimer || !ctx) { DC.msg = 'Mikrofón ešte nepočúva. Povoľ mikrofón a skús znova.'; drumCalRender(); return; }
   const st = DC_STEPS[DC.i]; DC.phase = 'run'; DC.msg = ''; DC.t0 = dcNow() + DC_LEAD; DC.cues = [];
-  if (st.kind === 'quiet') { DC.noise = 0; DC.falseHits = 0; S.drumSamp = []; S.drumV = DRUM_V; S.drumOn = false; }
-  else if (st.kind === 'learn') for (let k = 0; k < st.n + 6; k++) DC.cues.push({ t: DC.t0 + k * st.gap, exp: [st.lane], hits: [] });
-  else st.pat.forEach((p, k) => DC.cues.push({ t: DC.t0 + k * st.gap, exp: p, hits: [] }));
+  if (st.kind === 'quiet') { DC.noise = 0; DC.falseHits = 0; DC.nmf = false; DC.learn = []; DC.lab = []; DC.dts = []; S.drumOn = false; micModel(); micPost({ bg: 1 }); }
+  else if (st.kind === 'learn') { DC.learn = DC.learn.filter(h => h.l !== st.lane); for (let k = 0; k < st.n + 6; k++) DC.cues.push({ t: DC.t0 + k * st.gap, exp: [st.lane], hits: [] }); }
+  else { DC.lab = DC.lab.filter(l => l.step !== st.id); st.pat.forEach((p, k) => DC.cues.push({ t: DC.t0 + k * st.gap, exp: p, hits: [], c: {} })); }
   drumCalRender();
 }
 function dcNext(msg) { DC.phase = 'pause'; DC.msg = msg; DC.until = performance.now() + 1600; drumCalRender(); }
@@ -863,7 +916,7 @@ function dcTick() {
   if (DC.phase !== 'run') return;
   if (st.kind === 'quiet') {
     if (now > DC.t0 && SC) DC.noise = Math.max(DC.noise, SC.lvl);
-    if (now > DC.t0 + st.dur) dcQuietDone();
+    if (now > DC.t0 + st.dur && !DC.qDone) { DC.qDone = true; micPost({ bg: 0 }); setTimeout(() => { DC.qDone = false; dcQuietDone(); }, 150); }
   } else if (st.kind === 'learn') {
     if (now > DC.cues[DC.cues.length - 1].t + DC_WIN + 0.1) { const got = DC.cues.filter(c => c.hits.length).length;
       dcRetry(got < 3 ? 'Zachytil som len ' + got + ' úderov. Udieraj o niečo silnejšie alebo posuň tablet bližšie k bubnom. Skúsime to znova.'
@@ -871,7 +924,8 @@ function dcTick() {
   } else if (now > DC.cues[DC.cues.length - 1].t + DC_WIN + 0.1) dcCheckDone();
 }
 function dcQuietDone() {
-  const st = DC_STEPS[DC.i], before = S.micSens || 6;
+  if (!DC || DC.phase !== 'run') return;
+  const before = S.micSens || 6;
   // prah musí byť nad hlukom miestnosti; citlivosť len znižujeme, nikdy nezvyšujeme
   const need = Math.max(DC.noise * 2, DC.falseHits ? micThr() + 0.03 : 0);
   if (need > micThr()) S.micSens = Math.max(2, Math.min(10, Math.floor(10 - (need - 0.02) / 0.015)));
@@ -879,53 +933,51 @@ function dcQuietDone() {
   dcNext(S.micSens !== before ? 'V miestnosti je hluk, citlivosť som znížil z ' + before + ' na ' + S.micSens + '.' : 'Ticho je v poriadku.');
 }
 function dcLearnTry() {
-  const st = DC_STEPS[DC.i], vs = DC.cues.filter(c => c.hits.length).map(c => c.hits[0].vec);
-  if (vs.length < st.n) return;
+  const st = DC_STEPS[DC.i], hs = DC.cues.filter(c => c.hits.length).map(c => c.hits[0].spec);
+  if (hs.length < st.n) return;
   // vyhodíme údery, ktoré znejú inak ako ostatné (napr. sa ozval aj iný bubon)
-  const fs = vs.map(dfeat), c0 = dcCentroid(fs), dd = fs.map(f => ddist(f, c0)), md = [...dd].sort((a, b) => a - b)[dd.length >> 1];
-  const keep = vs.filter((v, i) => dd[i] <= Math.max(2.5 * md, 1));
+  const fs = hs.map(s => lshape(hitShape(s))), c0 = fs[0].map((_, k) => fs.reduce((a, f) => a + f[k], 0) / fs.length);
+  const dd = fs.map(f => ddist(f, c0)), md = [...dd].sort((a, b) => a - b)[dd.length >> 1];
+  const keep = hs.filter((s, i) => dd[i] <= Math.max(2.5 * md, 1));
   if (keep.length < st.n - 1) return; // čakáme na ďalšie údery, kým nie je dosť podobných
-  S.drumSamp = (S.drumSamp || []).filter(x => x.l !== st.lane).concat(keep.map(v => ({ v: q3(v), l: st.lane })));
-  DC.res[st.lane] = { n: keep.length, drop: vs.length - keep.length }; save();
-  DC.cues = DC.cues.filter(c => c.t <= DC.cues.find(c2 => c2.hits.length && c2.hits[0].vec === vs[vs.length - 1]).t);
+  DC.learn = DC.learn.filter(h => h.l !== st.lane).concat(keep.map(spec => ({ l: st.lane, spec })));
+  DC.res[st.lane] = { n: keep.length, drop: hs.length - keep.length };
+  const lastT = DC.cues.filter(c => c.hits.length).pop().t; DC.cues = DC.cues.filter(c => c.t <= lastT);
+  if (DRUMS.every(d => DC.learn.some(h => h.l === d)) && st.lane === 'h') {
+    // všetky tri bubny naučené: zostavíme šablóny a ďalej už počúvame cez rozklad (NMF)
+    const m = buildModel(DC.learn, DC.bg); S.nmf = m.model; S.drumV = DRUM_V; DC.simLab = m.lab; S.gates = tuneGates(m.lab); S.drumGate = 30; DC.nmf = true; save(); micModel();
+  }
   dcNext('Výborne, ' + DRUM_NAME[st.lane] + ' je naučený.');
 }
 function dcCheckDone() {
   const st = DC_STEPS[DC.i]; let ok = 0;
-  DC.cues.forEach(c => { if (c.hits.length) { const src = { v: q3(c.hits[0].vec), l: labOf(c.exp) }; DC.lab.push({ step: st.id, vec: c.hits[0].vec, exp: c.exp, src }); } if (c.ok) ok++; });
   const got = DC.cues.filter(c => c.hits.length).length;
-  if (got >= Math.ceil(DC.cues.length / 2)) { S.drumSamp = S.drumSamp.concat(DC.lab.filter(l => l.step === st.id).map(l => l.src)); save(); }
-  if (got < Math.ceil(DC.cues.length / 2)) { DC.lab = DC.lab.filter(l => l.step !== st.id); return dcRetry('Zachytil som len ' + got + ' z ' + DC.cues.length + ' úderov. Skúsime to znova.'); }
+  if (got < Math.ceil(DC.cues.length / 2)) return dcRetry('Zachytil som len ' + got + ' z ' + DC.cues.length + ' úderov. Skúsime to znova.');
+  DC.cues.forEach(c => { if (c.hits.length) DC.lab.push({ step: st.id, e: labOf(c.exp), c: Object.fromEntries(DRUMS.map(d => [d, Number((c.c[d] || 0).toPrecision(3))])) }); if (c.ok) ok++; });
   DC.res[st.id] = { ok, tot: DC.cues.length };
   dcNext(ok === DC.cues.length ? 'Paráda, všetko rozpoznané.' : 'Rozpoznané ' + ok + ' z ' + DC.cues.length + '. Na konci to appka doladí.');
 }
 function dcTune() {
-  // prah rozpoznania: vyskúšame hodnoty a necháme tú, pri ktorej sedí najviac kontrolných úderov
-  const prev = S.drumGate || 30;
-  if (DC.lab.length && drumCalibrated()) {
-    let best = prev, bs = -1;
-    for (let g = 10; g <= 80; g += 5) { S.drumGate = g; const sc = DC.lab.filter(l => dcSame(classify(l.vec, l.src), l.exp)).length;
-      if (sc > bs || (sc === bs && Math.abs(g - prev) < Math.abs(best - prev))) { bs = sc; best = g; } }
-    S.drumGate = best;
-    DC_STEPS.filter(s => s.kind === 'check').forEach(s => { const L = DC.lab.filter(l => l.step === s.id); if (DC.res[s.id]) DC.res[s.id].tuned = L.filter(l => dcSame(classify(l.vec, l.src), l.exp)).length; });
-  }
-  DC.res.gate = { from: prev, to: S.drumGate || 30 };
-  // zdvojené údery: predĺžime najkratší odstup
+  if (!drumCalibrated()) return;
+  const lab = (DC.simLab || []).concat(DC.lab.map(l => ({ e: l.e, c: l.c })));
+  const before = Object.assign({}, S.gates); S.gates = tuneGates(lab); S.nmfLab = lab; S.drumGate = 30;
+  DC.res.gates = { from: before, to: S.gates };
+  DC_STEPS.filter(s => s.kind === 'check').forEach(s => { if (DC.res[s.id]) DC.res[s.id].tuned = DC.lab.filter(l => l.step === s.id && labOf(lanesOf(l.c)) === l.e).length; });
   const gap0 = S.micGap || 110;
   if (DC.dts.length) { const need = Math.max(...DC.dts) * 1000 + 30; if (need > gap0) S.micGap = Math.min(250, Math.ceil(need / 5) * 5); }
   DC.res.gap = { n: DC.dts.length, from: gap0, to: S.micGap || 110 };
-  // rozlíšiteľnosť: každý samostatný úder skúsime rozpoznať podľa ostatných
-  const singles = (S.drumSamp || []).filter(x => x.l.length === 1);
-  DC.res.sep = singles.length ? singles.filter(x => classifyFull(x.v, x).best === x.l).length / singles.length : null;
-  DC.res.close = []; if (drumCalibrated()) [['k', 's'], ['k', 'h'], ['s', 'h']].forEach(([a, b]) => { const A = sampOf(a);
-    if (A.filter(x => classifyFull(x.v, x).best === b).length >= Math.max(2, A.length / 3)) DC.res.close.push(a + b); });
-  S.drumOn = true; save();
+  // rozlíšiteľnosť: samostatné údery z kalibrácie, rozpoznané novými šablónami a prahmi
+  const sl = DC.simLab || []; DC.res.sep = sl.length ? sl.filter(l => labOf(lanesOf(l.c)) === l.e).length / sl.length : null;
+  DC.res.close = []; DRUMS.forEach(a => DRUMS.forEach(b => { if (a === b) return; const A = sl.filter(l => l.e === a);
+    if (A.filter(l => lanesOf(l.c).includes(b)).length >= Math.max(2, A.length / 3)) DC.res.close.push(a + b); }));
+  S.drumOn = true; save(); micModel();
 }
-function drumCalHit(vec, t) {
-  const now = dcNow();
-  if (DC.phase === 'test') { dcFixCommit(); const r = classifyFull(vec), lanes = r.lanes; scopeHit(t, lanes, !lanes.length); dcLight(lanes); logHit(vec, lanes, 'test');
-    DC.last = { vec: vec.slice(), lanes, at: performance.now() };
-    DC.msg = (lanes.length ? 'Rozpoznané: ' + lanes.map(l => DRUM_NAME[l]).join(' + ') + '.' : r.why === 'weak' ? 'Úder bol príliš slabý, appka ho ignoruje.' : 'Tento zvuk appka nepozná, ignoruje ho.')
+// udalosť z mikrofónu: {t, spec} pri učení (surový úder) alebo {t, c: {k: r, s: r, h: r}} pri rozpoznávaní
+function drumCalHit(ev) {
+  const now = dcNow(), t = ev.t;
+  if (DC.phase === 'test') { if (!ev.c) return; dcFixCommit(); const lanes = lanesOf(ev.c); scopeHit(t, lanes, !lanes.length); dcLight(lanes); logHit(ev.c, lanes, 'test');
+    DC.last = { c: ev.c, lanes, at: performance.now() };
+    DC.msg = (lanes.length ? 'Rozpoznané: ' + lanes.map(l => DRUM_NAME[l]).join(' + ') + '.' : 'Úder bol príliš slabý alebo nepodobný bubnu, appka ho ignoruje.')
       + ' Ak to nesedí, ťukni na bubon (alebo bubny), ktorý si naozaj udrel.'; drumCalRender(); return; }
   if (DC.phase !== 'run' || now < DC.t0 - DC_WIN) { scopeHit(t, [], true); return; }
   const st = DC_STEPS[DC.i];
@@ -933,11 +985,18 @@ function drumCalHit(vec, t) {
   const tA = t - (S.off.mic || 0) / 1000;
   let c = null; for (const q of DC.cues) if (Math.abs(tA - q.t) < DC_WIN && (!c || Math.abs(tA - q.t) < Math.abs(tA - c.t))) c = q;
   if (!c) { scopeHit(t, [], true); DC.flash = { t: now, text: 'Počkaj, kým nota dorazí k čiare' }; return; }
-  if (c.hits.length) { DC.dts.push(t - c.hits[0].t); c.hits.push({ t }); scopeHit(t, [], true); DC.flash = { t: now, text: 'Jeden úder som počul dvakrát' }; return; }
-  c.hits.push({ t, tA, vec: vec.slice() });
-  if (st.kind === 'learn') { scopeHit(t, [st.lane]); dcLight([st.lane]); dcLearnTry(); }
-  else { const lanes = classify(vec); c.got = lanes; c.ok = dcSame(lanes, c.exp); scopeHit(t, lanes, !lanes.length); dcLight(lanes); }
-  drumCalRender();
+  if (st.kind === 'learn') {
+    if (!ev.spec) return;
+    if (c.hits.length) { DC.dts.push(t - c.hits[0].t); scopeHit(t, [], true); DC.flash = { t: now, text: 'Jeden úder som počul dvakrát' }; return; }
+    c.hits.push({ t, tA, spec: ev.spec }); scopeHit(t, [st.lane]); dcLight([st.lane]); dcLearnTry(); drumCalRender(); return;
+  }
+  if (!ev.c) return;
+  // kontrola: pre každý bubon si pamätáme najsilnejší nárast v okne noty; dvojitý úder toho istého bubna = zdvojenie
+  const lanes = lanesOf(ev.c);
+  c.ht = c.ht || {}; lanes.forEach(d => { if (c.ht[d] != null) { DC.dts.push(t - c.ht[d]); DC.flash = { t: now, text: 'Jeden úder som počul dvakrát' }; } else c.ht[d] = t; });
+  DRUMS.forEach(d => { if ((ev.c[d] || 0) > (c.c[d] || 0)) c.c[d] = ev.c[d]; });
+  if (!c.hits.length) c.hits.push({ t, tA });
+  c.got = lanesOf(c.c); c.ok = dcSame(c.got, c.exp); scopeHit(t, lanes, !lanes.length); dcLight(lanes); drumCalRender();
 }
 function dcFixTap(lane) {
   if (!DC || DC.phase !== 'test' || !DC.last || performance.now() - DC.last.at > 8000) return;
@@ -945,18 +1004,17 @@ function dcFixTap(lane) {
   clearTimeout(DC.fixT); DC.fixT = setTimeout(dcFixCommit, 1800);
   const ls = DRUMS.filter(d => DC.fix.has(d));
   DC.msg = ls.length ? 'Oprava: ' + ls.map(l => DRUM_NAME[l]).join(' + ') + '. Ak si udrel viac bubnov naraz, ťukni aj na ďalší.' : 'Oprava zrušená.';
-  document.querySelectorAll('#dc-tiles .dct').forEach(t => t.classList.toggle('cur', DC.fix.has(t.dataset.lane))); drumCalRender();
+  drumCalRender();
 }
 function dcFixCommit() {
   if (!DC || !DC.fix) return; clearTimeout(DC.fixT); const l = labOf([...DC.fix]); DC.fix = null;
-  document.querySelectorAll('#dc-tiles .dct').forEach(t => t.classList.remove('cur'));
-  if (!l || !DC.last) return;
-  S.drumSamp = (S.drumSamp || []).concat([{ v: q3(DC.last.vec), l, fix: 1 }]); save(); DC.fixes = (DC.fixes || 0) + 1;
-  DC.msg = 'Zapamätané: tento zvuk je ' + l.split('').map(x => DRUM_NAME[x]).join(' + ') + '. Opravených úderov: ' + DC.fixes + '.'; DC.last = null; drumCalRender();
+  if (!l || !DC.last) { drumCalRender(); return; }
+  S.nmfLab = (S.nmfLab || []).concat([{ e: l, c: DC.last.c, fix: 1 }]); S.gates = tuneGates(S.nmfLab); save(); DC.fixes = (DC.fixes || 0) + 1;
+  DC.msg = 'Zapamätané: bol to ' + l.split('').map(x => DRUM_NAME[x]).join(' + ') + '. Prahy bubnov som upravil (opravených úderov: ' + DC.fixes + ').'; DC.last = null; drumCalRender();
 }
 function dcExport() {
-  const data = JSON.stringify({ app: 'bubnova-vyprava', ver: document.getElementById('ver').textContent, sr: ctx && ctx.sampleRate, set: { micSens: S.micSens, micGap: S.micGap, drumGate: S.drumGate, offMic: S.off.mic },
-    samples: (S.drumSamp || []).map(x => [x.l, x.v, x.fix ? 1 : 0]), hits: HITLOG.map(h => [h.c, h.r, h.v]) });
+  const data = JSON.stringify({ app: 'bubnova-vyprava', ver: document.getElementById('ver').textContent, sr: ctx && ctx.sampleRate, set: { micSens: S.micSens, micGap: S.micGap, drumGate: S.drumGate, offMic: S.off.mic, gates: S.gates },
+    model: S.nmf, lab: S.nmfLab, hits: HITLOG.map(h => [h.c, h.r, h.v]) });
   const ta = $('#dc-exp'); ta.hidden = false; ta.value = data; ta.focus(); ta.select();
   const done = ok => { DC.msg = ok ? 'Dáta sú skopírované. Vlož ich do chatu (podrž prst a Vložiť), pomôžu mi vyladiť rozpoznávanie.' : 'Dáta sú v poli nižšie, je označené. Skopíruj ho a vlož do chatu.'; drumCalRender(); };
   try { navigator.clipboard.writeText(data).then(() => done(true), () => done(document.execCommand('copy'))); } catch (e) { done(document.execCommand('copy')); }
@@ -972,7 +1030,7 @@ function drumCalRender() {
     : ph === 'test' ? 'Udri do bubna a rozpoznaný bubon sa rozsvieti. Keď sa appka pomýli, ťukni na bubon, ktorý si naozaj udrel, a appka sa to naučí.' : st.text);
   const lanes = ph === 'run' || ph === 'pause' || ph === 'retry' ? (st.kind === 'learn' ? [st.lane] : st.kind === 'check' ? [...new Set(st.pat.flat())] : []) : [];
   document.querySelectorAll('#dc-tiles .dct').forEach(t => { const ln = t.dataset.lane; t.classList.toggle('cur', lanes.includes(ln) || !!(ph === 'test' && DC.fix && DC.fix.has(ln)));
-    t.querySelector('.n').textContent = ph === 'run' && st.kind === 'learn' && ln === st.lane ? Math.min(st.n, DC.cues.filter(c => c.hits.length).length) + ' / ' + st.n : DC.res[ln] ? 'naučený' : ''; });
+    t.querySelector('.n').textContent = ph === 'run' && st.kind === 'learn' && ln === st.lane ? Math.min(st.n, DC.cues.filter(c => c.hits.length).length) + ' / ' + st.n : DC.res[ln] || (ph === 'test' && drumCalibrated()) ? 'naučený' : ''; });
   $('#dc-start').hidden = ph !== 'intro'; $('#dc-done').hidden = ph !== 'summary' && ph !== 'test'; $('#dc-test').hidden = ph !== 'summary'; $('#dc-export').hidden = ph !== 'summary' && ph !== 'test'; if (ph !== 'summary' && ph !== 'test') $('#dc-exp').hidden = true;
   $('#dc-redo').hidden = ph === 'intro'; $('#dc-cue').hidden = ph === 'summary' || ph === 'intro' || ph === 'test';
   $('#dc-sum').hidden = ph !== 'summary'; if (ph === 'summary') $('#dc-sum').innerHTML = dcSummary();
@@ -983,7 +1041,7 @@ function dcSummary() {
   DRUMS.forEach(d => { if (r[d]) li.push([DRUM_NAME[d][0].toUpperCase() + DRUM_NAME[d].slice(1), 'zvuk naučený z ' + r[d].n + ' úderov' + (r[d].drop ? ' (' + r[d].drop + ' odlišné vynechané)' : '')]); });
   if (r.sep != null) li.push(['Rozlíšiteľnosť bubnov', pct(r.sep) + (r.sep >= 0.9 ? ', výborné' : r.sep >= 0.75 ? ', dobré' : ', slabé, skús tablet posunúť bližšie')]);
   DC_STEPS.filter(s => s.kind === 'check').forEach(s => { const x = r[s.id]; if (x) li.push([s.title, 'správne ' + (x.tuned != null ? x.tuned : x.ok) + ' z ' + x.tot + (x.tuned != null && x.tuned !== x.ok ? ' (po doladení, pôvodne ' + x.ok + ')' : '')]); });
-  if (r.gate) li.push(['Prah rozpoznania bubna', r.gate.to !== r.gate.from ? 'zmenený z ' + r.gate.from + ' na ' + r.gate.to + ' %' : 'ponechaný ' + r.gate.to + ' %']);
+  if (r.gates) li.push(['Prah pre každý bubon', DRUMS.map(d => DRUM_NAME[d] + ' ' + Math.round(gateRule(d).t * 100) + ' %').join(', ')]);
   if (r.gap) li.push(['Zdvojené údery', r.gap.n ? r.gap.n + '×, najkratší odstup predĺžený na ' + r.gap.to + ' ms' : 'žiadne']);
   (r.close || []).forEach(p => li.push(['Pozor', DRUM_NAME[p[0]] + ' a ' + DRUM_NAME[p[1]] + ' znejú pre mikrofón veľmi podobne. Skús tablet posunúť alebo naladiť bubny.']));
   return li.map(([a, b]) => '<li><b>' + a + ':</b> ' + b + '</li>').join('');
@@ -1086,9 +1144,9 @@ const TUNE = [
   { k: 'off.touch', name: 'Oneskorenie dotyku', min: -100, max: 300, step: 5, unit: ' ms', def: 30, help: 'Pre ťukanie na pady na obrazovke.' },
   { k: 'outMs', name: 'Oneskorenie zvuku z reproduktora', min: 0, max: 400, step: 5, unit: ' ms', def: 0, help: 'Posunie noty tak, aby prišli na čiaru vtedy, keď počuješ klik. Pri Bluetooth slúchadlách daj 150 až 250 ms.' },
   { k: 'micSens', name: 'Citlivosť mikrofónu', min: 1, max: 10, step: 1, unit: '', def: 6, help: 'Vyššia citlivosť zachytí aj tichší úder, ale aj hluk.' },
-  { k: 'micGap', name: 'Najkratší odstup úderov (mikrofón)', min: 40, max: 250, step: 5, unit: ' ms', def: 110, help: 'Menej, ak hráš rýchle šestnástiny. Viac, ak jeden úder hra počíta dvakrát.' },
+  { k: 'micGap', name: 'Najkratší odstup úderov na ten istý bubon', min: 30, max: 250, step: 5, unit: ' ms', def: 110, help: 'Platí pre každý bubon zvlášť, údery na rôzne bubny naraz sa počítajú vždy. Menej, ak hráš rýchle šestnástiny. Viac, ak jeden úder hra počíta dvakrát.' },
   { k: 'drumOn', name: 'Rozlišovať bubny podľa zvuku', check: true, def: 0, help: 'Zapne sa po kalibrácii bubnov. Vypnuté = každý úder sa priradí k najbližšej note bez ohľadu na bubon.' },
-  { k: 'drumGate', name: 'Prah rozpoznania bubna', min: 10, max: 80, step: 5, unit: ' %', def: 30, help: 'Úder slabší než toto percento sily z kalibrácie sa ignoruje. Zvýš, ak appka hlási údery na bubnoch, do ktorých si neudrel.' },
+  { k: 'drumGate', name: 'Prah rozpoznania bubna', min: 10, max: 80, step: 5, unit: ' %', def: 30, help: 'Kalibrácia nastaví prah pre každý bubon sama (30 % = presne podľa kalibrácie). Zvýš, ak appka hlási údery na bubnoch, do ktorých si neudrel, zníž, ak niektoré údery nezachytí.' },
   { k: 'tol', name: 'Tolerancia hodnotenia', min: 60, max: 160, step: 5, unit: ' %', def: 100, help: 'Viac je zhovievavejšie k nepresnosti, menej je prísnejšie.' },
 ];
 const tget = k => k.startsWith('off.') ? S.off[k.slice(4)] : S[k];
@@ -1127,7 +1185,7 @@ $('#dc-redo').addEventListener('click', () => { DC.i = 0; DC.res = {}; DC.lab = 
 $('#dc-start').addEventListener('click', dcStartStep);
 $('#dc-export').addEventListener('click', dcExport);
 document.querySelectorAll('#dc-tiles .dct').forEach(t => t.addEventListener('pointerdown', () => dcFixTap(t.dataset.lane)));
-$('#drum-test').addEventListener('click', () => { if (!drumCalibrated()) { io('Najprv spusti „Kalibrovať bubny“. Táto verzia rozpoznáva bubny inak, preto treba kalibráciu zopakovať.'); return; } drumCalOpen(); DC.phase = 'test'; drumCalRender(); });
+$('#drum-test').addEventListener('click', () => { if (!drumCalibrated()) { io('Najprv spusti „Kalibrovať bubny“. Táto verzia rozpoznáva bubny inak, preto treba kalibráciu zopakovať.'); return; } drumCalOpen(); DC.phase = 'test'; DC.nmf = true; micModel(); drumCalRender(); });
 $('#dc-test').addEventListener('click', () => { DC.phase = 'test'; DC.msg = ''; DC.last = null; drumCalRender(); });
 $('#g-back').addEventListener('click', () => { stop(); show('home'); });
 $('#r-home').addEventListener('click', () => show('home'));
@@ -1348,6 +1406,6 @@ document.addEventListener('visibilitychange', () => { if (document.hidden && G &
 
 if ($('#ver').textContent.includes('__')) $('#ver').hidden = true; // verziu dopĺňa len zostavenie aplikácie
 renderHome();
-window.__bubny = { get G() { return G; }, hit, start, ALL, get ctx() { return ctx; }, get DC() { return DC; }, drumCalHit, get S() { return S; }, dfeat, ddist, dcCentroid, classifyFull };
+window.__bubny = { get G() { return G; }, hit, start, ALL, get ctx() { return ctx; }, get DC() { return DC; }, drumCalHit, get S() { return S; }, nmfSolve, buildModel, lanesOf };
 })();
 </script>
