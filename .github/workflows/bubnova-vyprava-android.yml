@@ -59,7 +59,10 @@ jobs:
         working-directory: bubnova-vyprava/android
         run: ./gradlew assembleDebug --no-daemon
       - name: Pomenovanie APK podla verzie
-        run: cp android/app/build/outputs/apk/debug/app-debug.apk bubnova-vyprava-v${{ github.run_number }}.apk
+        run: |
+          # podpis vlastnym stalym klucom (predvoleny ladiaci kluc sa na kazdom stroji generuje znova)
+          AS=$(ls $ANDROID_HOME/build-tools/*/apksigner | sort -V | tail -1)
+          $AS sign --ks native/debug.keystore --ks-pass pass:android --ks-key-alias androiddebugkey --key-pass pass:android --out bubnova-vyprava-v${{ github.run_number }}.apk android/app/build/outputs/apk/debug/app-debug.apk
       - name: Kontrola podpisu (musi byt stale rovnaky kluc)
         working-directory: bubnova-vyprava
         run: |
