@@ -957,7 +957,10 @@ const CK = ['k', 's', 'h', 'k_', 's_', 'h_'];
 const evC = (r, s) => { const c = {}; DRUMS.forEach((d, j) => { c[d] = Number(r[j].toPrecision(3)); c[d + '_'] = Number((s ? s[j] : 0).toPrecision(3)); }); return c; };
 const cVal = (c, d, w) => (c[d] || 0) + (w || 0) * (c[d + '_'] || 0);
 const gScore = (c, d, rule) => cVal(c, d, rule.w) - DRUMS.reduce((a, e) => a + (e !== d ? (rule.b[e] || 0) * cVal(c, e, rule.w) : 0), 0);
-const lanesOf = (c, near) => DRUMS.filter(d => gScore(c, d, gateRule(d)) >= gateOf(d) * (near && near(d) ? 0.6 : 1));
+// pri očakávanej note stačí slabší úder; kopák (pedál) býva v hre tichší než pri kalibrácii, preto ešte menej
+// (podľa nahrávok z tabletu: kopák mal pri minutých notách rovnako silný hlboký tón ako pri trafených)
+const NEAR_F = { k: 0.4, s: 0.6, h: 0.6 };
+const lanesOf = (c, near) => DRUMS.filter(d => gScore(c, d, gateRule(d)) >= gateOf(d) * (near && near(d) ? NEAR_F[d] : 1));
 // šablóna úderu: nárast spektra v prvých ~20 ms oproti oknu pred úderom
 function hitShape(spec) { const K = spec[0].length, a = new Array(K).fill(0);
   for (let i = 1; i <= 4 && i < spec.length; i++) for (let k = 0; k < K; k++) a[k] += Math.max(0, spec[i][k] - spec[0][k]); return unit(a); }
