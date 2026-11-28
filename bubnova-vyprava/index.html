@@ -87,6 +87,7 @@ details p{margin-top:10px;font-size:.9rem;max-width:65ch}
 .prog{flex:1;min-width:120px;height:8px;border-radius:99px;background:var(--panel);overflow:hidden;align-self:center}
 .prog div{height:100%;width:0;background:var(--brass)}
 canvas{display:block;width:100%;height:clamp(230px,40vh,340px);background:var(--panel);border-radius:var(--r);touch-action:none}
+.pads[hidden]{display:none}
 .pads{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 .pad{touch-action:none;user-select:none;-webkit-user-select:none;padding:20px 6px 14px;border-radius:var(--r);background:var(--panel);border-bottom:6px solid var(--c);
   font-family:var(--display);font-size:1.15rem;font-weight:800;display:flex;flex-direction:column;align-items:center;gap:2px}
@@ -156,6 +157,7 @@ tr:last-child td{border-bottom:0}
       <div class="bar">
         <button class="chip" id="opt-guide" aria-pressed="true">Počuť vzor</button>
         <button class="chip" id="opt-calib">Kalibrácia oneskorenia</button>
+        <button class="chip" id="opt-travel" aria-pressed="false">Cestovateľský mód bez bicích</button>
       </div>
       <details>
         <summary>Pripojiť bicie alebo mikrofón</summary>
@@ -167,7 +169,7 @@ tr:last-child td{border-bottom:0}
           <button class="chip" id="opt-rec" aria-pressed="false">Nahrávať hru na meranie</button>
         </div>
         <div class="bar" id="mic-ui" hidden style="align-items:center"><span class="label">Hlasitosť</span><div class="prog" id="mic-meter"><div></div></div><label class="label" style="display:flex;align-items:center;gap:8px">Citlivosť <input id="mic-sens" type="range" min="1" max="10" step="1"></label><button class="chip" id="drum-calib">Kalibrovať bubny</button><button class="chip" id="drum-test">Vyskúšať rozpoznanie</button><button class="chip" id="mic-calib">Kalibrovať oneskorenie</button><button class="chip" id="cal-save">Uložiť kalibráciu do súboru</button><button class="chip" id="cal-load">Načítať kalibráciu zo súboru</button><input type="file" id="cal-file" accept=".json,application/json" hidden><span class="label" id="mic-src"></span></div>
-        <p class="muted" id="io-status">Bez pripojenia sa hrá klávesmi J, F a medzerníkom alebo ťukaním na pady.</p>
+        <p class="muted" id="io-status">Bez pripojenia sa hrá klávesmi J, F a medzerníkom. Ak nemáš pri sebe bicie, zapni „Cestovateľský mód bez bicích“ a ťukaj na pady na obrazovke.</p>
         <p class="muted">Po kalibrácii bubnov mikrofón rozozná kopák, rytmičák a hi-hat. Počuje aj reproduktor, preto hraj so slúchadlami. „Nahrávať hru na meranie“ uloží zvuk každej zahranej úrovne do tabletu spolu s notami, aby sa dalo zmerať, ako presne appka bubny rozpoznáva.</p>
       </details>
       <canvas class="scope" id="scope-home" hidden></canvas>
@@ -185,7 +187,7 @@ tr:last-child td{border-bottom:0}
     <div class="wrap">
       <div class="gamehead">
         <div><p class="label" id="g-venue"></p><h2 id="g-name"></h2></div>
-        <button class="btn ghost" id="g-back">Späť na turné</button>
+        <div class="bar" style="margin:0"><button class="chip" id="g-pads" aria-pressed="false">Ukázať pady</button><button class="btn ghost" id="g-back">Späť na turné</button></div>
       </div>
       <div class="hud">
         <div><b id="g-score">0</b><span class="label">body</span></div>
@@ -193,7 +195,7 @@ tr:last-child td{border-bottom:0}
         <div class="prog" aria-hidden="true"><div id="g-prog"></div></div>
       </div>
       <canvas id="cv"></canvas>
-      <div class="pads">
+      <div class="pads" id="g-padbox" hidden>
         <button class="pad" data-lane="h" style="--c:var(--brass)">Hi-hat<small>kláves J</small></button>
         <button class="pad" data-lane="s" style="--c:var(--skin)">Rytmičák<small>kláves F</small></button>
         <button class="pad" data-lane="k" style="--c:var(--kick)">Kopák<small>medzerník</small></button>
@@ -638,6 +640,7 @@ function renderHome() {
   $('#st-streak').textContent = S.streak || 0;
   $('#rank').textContent = total >= 33 ? 'Hviezda pódia' : total >= 24 ? 'Klubový bubeník' : total >= 15 ? 'Bubeník zo skúšobne' : total >= 6 ? 'Garážový bubeník' : 'Nováčik';
   $('#opt-guide').setAttribute('aria-pressed', S.guide);
+  padsUi();
   const dx = (S.dayXp && S.dayXp.d === ymd(new Date())) ? S.dayXp.xp : 0;
   $('#st-goal').textContent = dx + ' / ' + GOAL + ' XP'; $('#st-goalbar').style.width = Math.min(100, dx / GOAL * 100) + '%';
   const tour = $('#tour'); tour.textContent = '';
@@ -1434,6 +1437,10 @@ const wake = () => { if (ctx && ctx.state !== 'running') ctx.resume().catch(() =
 addEventListener('pointerdown', wake, true);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) wake(); });
 $('#opt-guide').addEventListener('click', () => { S.guide = !S.guide; save(); renderHome(); });
+function padsUi() { const on = !!S.travel; $('#g-padbox').hidden = !on; $('#opt-travel').setAttribute('aria-pressed', on); $('#g-pads').setAttribute('aria-pressed', on); $('#g-pads').textContent = on ? 'Skryť pady' : 'Ukázať pady'; }
+$('#opt-travel').addEventListener('click', () => { S.travel = !S.travel; save(); padsUi(); });
+$('#g-pads').addEventListener('click', () => { S.travel = !S.travel; save(); padsUi(); });
+padsUi();
 $('#opt-calib').addEventListener('click', () => start(CALIB));
 $('#mic-calib').addEventListener('click', () => start(CALIB));
 $('#drum-calib').addEventListener('click', drumCalOpen);
